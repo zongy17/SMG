@@ -1,0 +1,8 @@
+.vscode/*
+mpi-include/*
+Fortran-code/
+*namelist*
+.VSCode*
+demo*/
+matlab*/
+*.txt
