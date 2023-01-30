@@ -2,7 +2,7 @@
 #define SMG_COMMON_HPP
 
 #ifndef KSP_BIT
-#define KSP_BIT 32
+#define KSP_BIT 64
 #endif
 #ifndef PC_BIT
 #define PC_BIT 32
@@ -35,6 +35,7 @@
 
 #define IDX_TYPE int
 
+#define NEON_MAX_STRIDE 4
 // #define NDEBUG
 
 #include <assert.h>
@@ -50,6 +51,7 @@
 #include <string.h>
 #include <string>
 #include <vector>
+#include <unordered_map>
 
 enum NEIGHBOR_ID {I_L, I_U, J_L, J_U, K_L, K_U, NUM_NEIGHBORS};
 typedef enum {VERT} LINE_DIRECTION;

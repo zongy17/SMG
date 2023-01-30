@@ -10,11 +10,11 @@
 #include "../precond/block_ILU.hpp"
 
 
-typedef enum {STANDARD} COARSEN_TYPE;
+typedef enum {STANDARD, SEMI_XY} COARSEN_TYPE;
 typedef enum {DISCRETIZED, GALERKIN} COARSE_OP_TYPE;
 typedef enum {PJ, PGS, LGS, PILU, BILU3d7, BILU3d15, BILU3d19, BILU3d27, GaussElim} RELAX_TYPE;
-typedef enum {Rst_8cell, Rst_64cell} RESTRICT_TYPE;
-typedef enum {Plg_linear_8cell, Plg_linear_64cell} PROLONG_TYPE;
+typedef enum {Rst_8cell, Rst_64cell, Rst_4cell} RESTRICT_TYPE;
+typedef enum {Plg_linear_8cell, Plg_linear_64cell, Plg_linear_4cell} PROLONG_TYPE;
 
 template<typename idx_t>
 class COAR_TO_FINE_INFO {

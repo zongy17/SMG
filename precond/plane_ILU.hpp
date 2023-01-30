@@ -9,8 +9,8 @@
 typedef enum {ILU_2D9} PlaneILU_type;
 typedef enum {ROUND_ROBIN, COWORK_1On1=1, COWORK_2ON1, COWORK_3ON1, COWORK_4ON1} CoWork_type;
 
-template<typename idx_t, typename data_t, typename oper_t, typename res_t>
-class PlaneILU final : public PlaneSolver<idx_t, data_t, oper_t, res_t> {
+template<typename idx_t, typename data_t, typename calc_t>
+class PlaneILU final : public PlaneSolver<idx_t, data_t, calc_t> {
 public:
     PlaneILU_type type;
     idx_t outer_dim = 0, midle_dim = 0, inner_dim = 0;
@@ -18,8 +18,9 @@ public:
     idx_t lnz = 0, rnz = 0;
     // ILU分解后的上下三角结构化矩阵
     data_t * L = nullptr, * U = nullptr;
-    res_t * buf = nullptr, * buf_mem = nullptr;// 用于数据shape转换的
-    res_t * tmp = nullptr, * tmp_mem = nullptr;// 中间变量
+    bool shuffled = false;
+    calc_t * buf = nullptr, * buf_mem = nullptr;// 用于数据shape转换的
+    calc_t * tmp = nullptr, * tmp_mem = nullptr;// 中间变量
     // 记录stencil偏移
     idx_t num_stencil = 0;// 未初始化
     const idx_t * stencil_offset = nullptr;
@@ -64,12 +65,12 @@ public:
            然后再求解残差方程得到误差：e = U^{-1}*L^{-1}*resi，再将误差e累加回到近似解：output += e
      */
 protected:
-    void Mult(const par_structVector<idx_t, res_t> & input, 
-                    par_structVector<idx_t, res_t> & output) const ;
+    void Mult(const par_structVector<idx_t, calc_t> & input, 
+                    par_structVector<idx_t, calc_t> & output) const ;
     void apply() const ;
 public:
-    void Mult(const par_structVector<idx_t, res_t> & input, 
-                    par_structVector<idx_t, res_t> & output, bool use_zero_guess) const {
+    void Mult(const par_structVector<idx_t, calc_t> & input, 
+                    par_structVector<idx_t, calc_t> & output, bool use_zero_guess) const {
         this->zero_guess = use_zero_guess;
         Mult(input, output);
         this->zero_guess = false;// reset for safety concern
@@ -78,8 +79,8 @@ public:
     ~PlaneILU();
 };
 
-template<typename idx_t, typename data_t, typename oper_t, typename res_t>
-PlaneILU<idx_t, data_t, oper_t, res_t>::~PlaneILU() {
+template<typename idx_t, typename data_t, typename calc_t>
+PlaneILU<idx_t, data_t, calc_t>::~PlaneILU() {
     if (L != nullptr) {delete L; L = nullptr;}
     if (U != nullptr) {delete U; U = nullptr;}
     if (buf_mem != nullptr) {delete buf_mem; buf_mem = nullptr;}
@@ -88,21 +89,21 @@ PlaneILU<idx_t, data_t, oper_t, res_t>::~PlaneILU() {
     if (worker_tidInGroup != nullptr) {delete worker_tidInGroup; worker_tidInGroup = nullptr;}
 }
 
-template<typename idx_t, typename data_t, typename oper_t, typename res_t>
-void PlaneILU<idx_t, data_t, oper_t, res_t>::Setup() {
+template<typename idx_t, typename data_t, typename calc_t>
+void PlaneILU<idx_t, data_t, calc_t>::Setup() {
     if (setup_called) return ;
 
     assert(this->oper != nullptr);
     assert(this->plane_dir == XZ);// 下设y方向宽度
     // assert matrix has updated halo to prepare data 强制类型转换
-    const par_structMatrix<idx_t, oper_t, res_t> & par_A = *((par_structMatrix<idx_t, oper_t, res_t>*)(this->oper));
-    const seq_structMatrix<idx_t, oper_t, res_t> & A = *(par_A.local_matrix);
+    const par_structMatrix<idx_t, calc_t, calc_t> & par_A = *((par_structMatrix<idx_t, calc_t, calc_t>*)(this->oper));
+    const seq_structMatrix<idx_t, calc_t, calc_t> & A = *(par_A.local_matrix);
 
-    if (sizeof(oper_t) != sizeof(data_t)) {
+    if constexpr (sizeof(calc_t) != sizeof(data_t)) {
         int my_pid; MPI_Comm_rank(MPI_COMM_WORLD, &my_pid);
         if (my_pid == 0) {
-            printf("  \033[1;31mWarning\033[0m: PILU::Setup() using oper_t of %ld bytes, but data_t of %ld bytes", sizeof(oper_t), sizeof(data_t));
-            printf(" ===> still factorized it: but instead should consider to use higher precision to Setup then copy with truncation.\n");
+            printf("  \033[1;31mWarning\033[0m: PILU::Setup() using calc_t of %ld bytes, but data_t of %ld bytes\n",
+                sizeof(calc_t), sizeof(data_t));
         }
     }
 
@@ -117,13 +118,13 @@ void PlaneILU<idx_t, data_t, oper_t, res_t>::Setup() {
     assert(num_stencil % 2 != 0);
     lnz = (num_stencil - 1) >> 1;
     rnz =  num_stencil - lnz;
-    if (L != nullptr) {delete L; L = nullptr;}
-    if (U != nullptr) {delete U; U = nullptr;}
-    data_t * A_trc = new data_t [ outer_dim * midle_dim      * inner_dim * num_stencil];// 抽取的A矩阵
-    L              = new data_t [ outer_dim * midle_dim      * inner_dim * lnz];
-    U              = new data_t [ outer_dim * midle_dim      * inner_dim * rnz];
-    buf_mem        = new res_t  [(outer_dim * midle_dim + 4) * inner_dim]; buf = buf_mem + 2 * inner_dim;// 开多两柱保越界
-    tmp_mem        = new res_t  [(outer_dim * midle_dim + 4) * inner_dim]; tmp = tmp_mem + 2 * inner_dim;
+    calc_t * A_trc = new calc_t [ outer_dim * midle_dim      * inner_dim * num_stencil];// 抽取的A矩阵
+    calc_t * L_high= new calc_t [ outer_dim * midle_dim      * inner_dim * lnz];
+    calc_t * U_high= new calc_t [ outer_dim * midle_dim      * inner_dim * rnz];
+    if (tmp_mem != nullptr) delete tmp_mem;
+    if (buf_mem != nullptr) delete buf_mem;
+    buf_mem = new calc_t  [(outer_dim * midle_dim + 4) * inner_dim]; buf = buf_mem + 2 * inner_dim;// 开多两柱保越界
+    tmp_mem = new calc_t  [(outer_dim * midle_dim + 4) * inner_dim]; tmp = tmp_mem + 2 * inner_dim;
     #pragma omp parallel for schedule(static)
     for (idx_t i = 0; i < (outer_dim * midle_dim + 4) * inner_dim; i++) {
         buf_mem[i] = 0.0;// 预先置零，免得出幺蛾子
@@ -137,28 +138,28 @@ void PlaneILU<idx_t, data_t, oper_t, res_t>::Setup() {
     assert(jend - jbeg == outer_dim); assert(iend - ibeg == midle_dim); assert(kend - kbeg == inner_dim);
 
     // extract vals from A_problem
-#define TRCIDX(d, k, i, j) (d) + num_stencil * ((k) + inner_dim * ((i) + midle_dim * (j)))
-#define MATIDX(mat, d, k, i, j) (d) + (k) * (mat).num_diag + (i) * (mat).slice_dk_size + (j) * (mat).slice_dki_size
-    
+    std::vector<idx_t> extract_ids;
     if (type == ILU_2D9) {
         assert(A.num_diag >= 9);
-        if (A.num_diag == 19 || A.num_diag == 27) {
-            const idx_t off_d = (A.num_diag == 19) ? 5 : 9;
-            #pragma omp parallel for collapse(3) schedule(static)
-            for (idx_t j = jbeg; j < jend; j++)
-            for (idx_t i = ibeg; i < iend; i++)
-            for (idx_t k = kbeg; k < kend; k++) {
-                idx_t real_j = j - jbeg, real_i = i - ibeg, real_k = k - kbeg;
-                const data_t * src_ptr = A.data + MATIDX(A, 0, k, i, j);
-                data_t * dst_ptr = A_trc + TRCIDX(0, real_k, real_i, real_j);
-                for (idx_t d = 0; d < 9; d++)
-                    dst_ptr[d] = src_ptr[off_d + d];
-            }
-        }
-        else assert(false);
+        if (A.num_diag == 19) {
+            extract_ids = {5, 6, 7, 8, 9, 10, 11, 12, 13};
+        } else if (A.num_diag == 27) {
+            extract_ids = {9, 10, 11, 12, 13, 14, 15, 16, 17};
+        } else assert(false);
     }
-    else {
-        MPI_Abort(par_A.comm_pkg->cart_comm, -555662);
+    assert(extract_ids.size() == (std::size_t) num_stencil);
+
+#define TRCIDX(d, k, i, j) (d) + num_stencil * ((k) + inner_dim * ((i) + midle_dim * (j)))
+#define MATIDX(mat, d, k, i, j) (d) + (k) * (mat).num_diag + (i) * (mat).slice_dk_size + (j) * (mat).slice_dki_size
+    #pragma omp parallel for collapse(3) schedule(static)
+    for (idx_t j = jbeg; j < jend; j++)
+    for (idx_t i = ibeg; i < iend; i++)
+    for (idx_t k = kbeg; k < kend; k++) {
+        idx_t real_j = j - jbeg, real_i = i - ibeg, real_k = k - kbeg;
+        const calc_t * src_ptr = A.data + MATIDX(A, 0, k, i, j);
+        calc_t * dst_ptr = A_trc + TRCIDX(0, real_k, real_i, real_j);
+        for (idx_t d = 0; d < num_stencil; d++)
+            dst_ptr[d] = src_ptr[extract_ids[d]];
     }
 #undef TRCIDX
 #undef MATIDX
@@ -167,8 +168,8 @@ void PlaneILU<idx_t, data_t, oper_t, res_t>::Setup() {
     for (idx_t j = jbeg; j < jend; j++) {// 逐面执行
         const idx_t off_s = (j-jbeg) * midle_dim * inner_dim;
         struct_ILU_2d(  A_trc + off_s * num_stencil,
-                        L     + off_s * lnz, 
-                        U     + off_s * rnz, 
+                        L_high+ off_s * lnz, 
+                        U_high+ off_s * rnz, 
                         midle_dim, inner_dim, num_stencil, stencil_offset);
     }
 
@@ -252,10 +253,52 @@ void PlaneILU<idx_t, data_t, oper_t, res_t>::Setup() {
             }
         }
     }
+
+    if (L != nullptr) delete L;
+    if (U != nullptr) delete U;
+    shuffled = false;
+    if constexpr (sizeof(data_t) == sizeof(calc_t)) {// 直接指向已开辟的内存即可，不需要释放
+        L = L_high;
+        U = U_high;
+    } else {// 混合精度
+        const idx_t tot_elems = outer_dim * midle_dim * inner_dim;
+        L = new data_t [tot_elems * lnz];
+        U = new data_t [tot_elems * rnz];
+        if (cw_type == ROUND_ROBIN || cw_type == COWORK_1On1) {// 此时需要做AOS=>SOA的转换
+            // 注意是逐层转换！！
+            const idx_t plane_elems = midle_dim * inner_dim;// 每层的总元素数
+            if (num_stencil == 9) {// 2d9
+                assert(lnz == 4 && rnz == 5);
+                // L:(0,1,2,3), U(0,1) (2,3,4)
+                #pragma omp parallel for collapse(2) schedule(static)
+                for (idx_t s = 0; s < outer_dim; s++) // 逐层
+                for (idx_t e = 0; e < plane_elems; e++) {
+                    data_t  *L_soa_0 = (L + s * plane_elems * lnz) + 0 * plane_elems + e * 4;
+                    data_t  *U_soa_0 = (U + s * plane_elems * rnz) + 0 * plane_elems + e * 2,
+                            *U_soa_1 = (U + s * plane_elems * rnz) + 2 * plane_elems + e * 3;
+                    const calc_t* Lh_aos = L_high + (s * plane_elems + e)* lnz,
+                                * Uh_aos = U_high + (s * plane_elems + e)* rnz;
+                    L_soa_0[0] = Lh_aos[0]; L_soa_0[1] = Lh_aos[1]; L_soa_0[2] = Lh_aos[2]; L_soa_0[3] = Lh_aos[3];
+                    U_soa_0[0] = Uh_aos[0]; U_soa_0[1] = Uh_aos[1];
+                    U_soa_1[0] = Uh_aos[2]; U_soa_1[1] = Uh_aos[3]; U_soa_1[2] = Uh_aos[4];
+                }
+            }
+            else assert(false);
+
+            shuffled = true;
+        } else {// 否则采用level-based的求解时不需要转换
+            #pragma omp parallel for schedule(static)
+            for (idx_t i = 0; i < tot_elems * lnz; i++)
+                L[i] = L_high[i];
+            #pragma omp parallel for schedule(static)
+            for (idx_t i = 0; i < tot_elems * rnz; i++)
+                U[i] = U_high[i];
+        }
+    }
 }
 
-template<typename idx_t, typename data_t, typename oper_t, typename res_t>
-void PlaneILU<idx_t, data_t, oper_t, res_t>::apply() const {
+template<typename idx_t, typename data_t, typename calc_t>
+void PlaneILU<idx_t, data_t, calc_t>::apply() const {
     
 #ifdef PROFILE
     int my_pid; MPI_Comm_rank(MPI_COMM_WORLD, &my_pid);
@@ -273,11 +316,11 @@ void PlaneILU<idx_t, data_t, oper_t, res_t>::apply() const {
                 // 前代（Forward），求解Ly=b，注意stencil_offset从0（第一个左非零元位置）开始传
                 struct_2d5_trsv_forward_hardCode(
                     L + s*vec_off*lnz, buf + s*vec_off, tmp + s*vec_off,// 注意偏移
-                    midle_dim, inner_dim, lnz, stencil_offset);
+                    midle_dim, inner_dim, lnz, stencil_offset, shuffled);
                 // 回代（Backward），求解Ux=y，注意stencil_offset从第一个右非零元（含对角元）位置开始传
                 struct_2d5_trsv_backward_hardCode(// 要与前代结果存储的位置相符
                     U + s*vec_off*rnz, tmp + s*vec_off, buf + s*vec_off,
-                    midle_dim, inner_dim, rnz, stencil_offset + 2 * lnz);
+                    midle_dim, inner_dim, rnz, stencil_offset + 2 * lnz, shuffled);
             }
         }
     }
@@ -289,14 +332,15 @@ void PlaneILU<idx_t, data_t, oper_t, res_t>::apply() const {
             if (j != -1) {
                 struct_2d5_trsv_forward_hardCode(
                     L + j*vec_off*lnz, buf + j*vec_off, tmp + j*vec_off,// 注意偏移
-                    midle_dim, inner_dim, lnz, stencil_offset);
+                    midle_dim, inner_dim, lnz, stencil_offset, shuffled);
                 struct_2d5_trsv_backward_hardCode(
                     U + j*vec_off*rnz, tmp + j*vec_off, buf + j*vec_off,
-                    midle_dim, inner_dim, rnz, stencil_offset + 2 * lnz);
+                    midle_dim, inner_dim, rnz, stencil_offset + 2 * lnz, shuffled);
             }
         }
     }
     else {// DYNAMIC_2On1 || DYNAMIC_3On1 || DYNAMIC_4On1
+        assert(!shuffled);
         const idx_t group_size = cw_type;
         group_sptrsv_2d5_levelbased_forward_hardCode(
             L, buf, tmp, num_slices, midle_dim, inner_dim, lnz, stencil_offset          , group_size, worker_tidInGroup, worker_jobID);
@@ -304,74 +348,84 @@ void PlaneILU<idx_t, data_t, oper_t, res_t>::apply() const {
             U, tmp, buf, num_slices, midle_dim, inner_dim, rnz, stencil_offset + 2 * lnz, group_size, worker_tidInGroup, worker_jobID);
     }
 #ifdef PROFILE
-    MPI_Barrier(MPI_COMM_WORLD);
     t = wall_time() - t;
+    double mint, maxt;
+    MPI_Allreduce(&t, &mint, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+    MPI_Allreduce(&t, &maxt, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
     int num_procs; MPI_Comm_size(MPI_COMM_WORLD, &num_procs);
     if (my_pid == 0) {
-        double bytes = (outer_dim * inner_dim) * (jend - jbeg) * (L->num_diag + U->num_diag) * sizeof(data_t);// 矩阵
-        int num_tmp = (cw_type == ROUND_ROBIN || cw_type == COWORK_1On1) ? omp_get_max_threads() : x.local_y;
-        bytes       += (outer_dim * inner_dim) *((jend - jbeg) * 2 + num_tmp) * sizeof(res_t);// 2 for b, x
+        double bytes = outer_dim * midle_dim * inner_dim * num_stencil * sizeof(data_t);// 矩阵
+        bytes       += outer_dim * midle_dim * inner_dim *         3   * sizeof(calc_t);// buf -> tmp -> buf
         bytes = bytes * num_procs / (1024 * 1024 * 1024);// GB
-        printf("PILU data_t %d oper_t %d total %.3f GB time %.6f s BW %.2f GB/s\n", sizeof(data_t), sizeof(oper_t), bytes, t, bytes/t);
+        printf("PILU data %ld calc %ld d%d total %.2f GB time %.5f/%.5f s BW %.2f/%.2f GB/s\n",
+                sizeof(data_t), sizeof(calc_t), num_stencil, bytes, mint, maxt, bytes/maxt, bytes/mint);
     }
 #endif
 }
 
-template<typename idx_t, typename data_t, typename oper_t, typename res_t>
-void PlaneILU<idx_t, data_t, oper_t, res_t>::Mult(const par_structVector<idx_t, res_t> & input, par_structVector<idx_t, res_t> & output) const
+template<typename idx_t, typename data_t, typename calc_t>
+void PlaneILU<idx_t, data_t, calc_t>::Mult(const par_structVector<idx_t, calc_t> & input, par_structVector<idx_t, calc_t> & output) const
 {
     CHECK_LOCAL_HALO( *(input.local_vector),  *(output.local_vector));// 检查相容性
 
     if (this->zero_guess) {// 特别地，当output为0向量时，与直接解方程无差异
-        const seq_structVector<idx_t, res_t> & b = *(input.local_vector);
-        seq_structVector<idx_t, res_t> & x = *(output.local_vector);
+        const seq_structVector<idx_t, calc_t> & b = *(input.local_vector);
+        seq_structVector<idx_t, calc_t> & x = *(output.local_vector);
     
         input.update_halo();// Additive Schwartz，并不需要南北的halo区填充
 
         // 拷贝到buf里
-        #pragma omp parallel for collapse(3) schedule(static)
+        #pragma omp parallel for collapse(2) schedule(static)
         for (idx_t j = jbeg; j < jend; j++)
-        for (idx_t i = ibeg; i < iend; i++)
-        for (idx_t k = kbeg; k < kend; k++) {
-            idx_t real_j = j - jbeg, real_i = i - ibeg, real_k = k - kbeg;
-            buf[(real_j * midle_dim + real_i) * inner_dim + real_k] = b.data[j * b.slice_ki_size + i * b.slice_k_size + k];
+        for (idx_t i = ibeg; i < iend; i++) {
+            idx_t real_j = j - jbeg, real_i = i - ibeg;
+            const calc_t * src_ptr = b.data + j * b.slice_ki_size + i * b.slice_k_size + kbeg;
+            calc_t * dst_ptr = buf + (real_j * midle_dim + real_i) * inner_dim;// 不需要加kbeg
+            for (idx_t k = 0; k < inner_dim; k++)// 拷贝连续的一柱
+                dst_ptr[k] = src_ptr[k];
         }
         apply();
         // 从buf里拷回
-        #pragma omp parallel for collapse(3) schedule(static)
+        #pragma omp parallel for collapse(2) schedule(static)
         for (idx_t j = jbeg; j < jend; j++)
-        for (idx_t i = ibeg; i < iend; i++)
-        for (idx_t k = kbeg; k < kend; k++) {// 只拷贝内部的本进程负责的区域
-            idx_t real_j = j - jbeg, real_i = i - ibeg, real_k = k - kbeg;
-            x.data[j * b.slice_ki_size + i * b.slice_k_size + k] = buf[(real_j * midle_dim + real_i) * inner_dim + real_k];
+        for (idx_t i = ibeg; i < iend; i++) {
+            idx_t real_j = j - jbeg, real_i = i - ibeg;
+            const calc_t * src_ptr = buf + (real_j * midle_dim + real_i) * inner_dim;// 不需要加kbeg
+            calc_t * dst_ptr = x.data + j * x.slice_ki_size + i * x.slice_k_size + kbeg;
+            for (idx_t k = 0; k < inner_dim; k++)// 拷贝连续的一柱
+                dst_ptr[k] = src_ptr[k];
         }
         if (this->weight != 1.0) vec_mul_by_scalar(this->weight, output, output);
     }
     else {
-        par_structVector<idx_t, res_t> resi(input), error(output);
+        par_structVector<idx_t, calc_t> resi(input), error(output);
         this->oper->Mult(output, resi, false);
 
         vec_add(input, -1.0, resi, resi);
         
         resi.update_halo();// Additive Schwartz，并不需要南北的halo区填充
         // 拷贝到buf里
-        #pragma omp parallel for collapse(3) schedule(static)
+        #pragma omp parallel for collapse(2) schedule(static)
         for (idx_t j = jbeg; j < jend; j++)
-        for (idx_t i = ibeg; i < iend; i++)
-        for (idx_t k = kbeg; k < kend; k++) {// 只拷贝内部的本进程负责的区域
-            idx_t real_j = j - jbeg, real_i = i - ibeg, real_k = k - kbeg;
-            buf[(real_j * midle_dim + real_i) * inner_dim + real_k] 
-                = resi.local_vector->data[j * resi.local_vector->slice_ki_size + i * resi.local_vector->slice_k_size + k];
+        for (idx_t i = ibeg; i < iend; i++) {
+            idx_t real_j = j - jbeg, real_i = i - ibeg;
+            const calc_t * src_ptr = resi.local_vector->data + j * resi.local_vector->slice_ki_size
+                                    + i * resi.local_vector->slice_k_size + kbeg;
+            calc_t * dst_ptr = buf + (real_j * midle_dim + real_i) * inner_dim;// 不需要加kbeg
+            for (idx_t k = 0; k < inner_dim; k++)// 拷贝连续的一柱
+                dst_ptr[k] = src_ptr[k];
         }
         apply();
         // 从buf里拷出
-        #pragma omp parallel for collapse(3) schedule(static)
+        #pragma omp parallel for collapse(2) schedule(static)
         for (idx_t j = jbeg; j < jend; j++)
-        for (idx_t i = ibeg; i < iend; i++)
-        for (idx_t k = kbeg; k < kend; k++) {// 只拷贝内部的本进程负责的区域
-            idx_t real_j = j - jbeg, real_i = i - ibeg, real_k = k - kbeg;
-            error.local_vector->data[j * error.local_vector->slice_ki_size + i * error.local_vector->slice_k_size + k] 
-                = buf[(real_j * midle_dim + real_i) * inner_dim + real_k];
+        for (idx_t i = ibeg; i < iend; i++) {
+            idx_t real_j = j - jbeg, real_i = i - ibeg;
+            const calc_t * src_ptr = buf + (real_j * midle_dim + real_i) * inner_dim;// 不需要加kbeg
+            calc_t * dst_ptr = error.local_vector->data + j * error.local_vector->slice_ki_size
+                                                        + i * error.local_vector->slice_k_size + kbeg;
+            for (idx_t k = 0; k < inner_dim; k++)// 拷贝连续的一柱
+                dst_ptr[k] = src_ptr[k];
         }
         vec_add(output, this->weight, error, output);
     }

@@ -32,11 +32,34 @@ void XYZ_standard_coarsen(const par_structVector<idx_t, data_t> & fine_vec, cons
 }
 
 template<typename idx_t, typename data_t>
+void XY_semi_coarsen(const par_structVector<idx_t, data_t> & fine_vec, const bool periodic[3], 
+    COAR_TO_FINE_INFO<idx_t> & coar_to_fine, idx_t stride = 2, idx_t base_x = 0, idx_t base_y = 0)
+{
+    assert(stride == 2);
+    // 要求进程内数据大小可以被步长整除
+    assert(fine_vec.local_vector->local_x % stride == 0);
+    coar_to_fine.fine_base_idx[0] = base_x;
+    coar_to_fine.stride[0] = stride;
+
+    assert(fine_vec.local_vector->local_y % stride == 0);
+    coar_to_fine.fine_base_idx[1] = base_y;
+    coar_to_fine.stride[1] = stride;
+
+    coar_to_fine.fine_base_idx[2] = 0;// Z方向不做粗化
+    coar_to_fine.stride[2] = 1;
+
+    int my_pid;
+    MPI_Comm_rank(MPI_COMM_WORLD, &my_pid);
+    if (my_pid == 0)
+        printf("coarsen base idx: x %d y %d z %d\n", 
+            coar_to_fine.fine_base_idx[0], coar_to_fine.fine_base_idx[1], coar_to_fine.fine_base_idx[2]);
+}
+
+template<typename idx_t, typename data_t>
 par_structMatrix<idx_t, data_t, data_t> * Galerkin_RAP_3d(RESTRICT_TYPE rstr_type, const par_structMatrix<idx_t, data_t, data_t> & fine_mat,
     PROLONG_TYPE prlg_type, const COAR_TO_FINE_INFO<idx_t> & info)
 {
-    assert( info.stride[0] == info.stride[1] && 
-            info.stride[1] == info.stride[2] && info.stride[0] == 2);
+    assert( info.stride[0] == info.stride[1] && info.stride[0] == 2);
     assert( info.fine_base_idx[0] == info.fine_base_idx[1] && 
             info.fine_base_idx[1] == info.fine_base_idx[2] && info.fine_base_idx[0] == 0);
 
@@ -51,6 +74,7 @@ par_structMatrix<idx_t, data_t, data_t> * Galerkin_RAP_3d(RESTRICT_TYPE rstr_typ
     const idx_t coar_gx = fine_mat.input_dim[0] / info.stride[0],
                 coar_gy = fine_mat.input_dim[1] / info.stride[1],
                 coar_gz = fine_mat.input_dim[2] / info.stride[2];
+    // printf("coar gx %d gy %d gz %d\n", coar_gx, coar_gy, coar_gz);
     assert(coar_gx % num_procs[1] == 0 && coar_gy % num_procs[0] == 0 && coar_gz % num_procs[2] == 0);
 
     par_structMatrix<idx_t, data_t, data_t> * coar_mat = nullptr;
@@ -58,7 +82,8 @@ par_structMatrix<idx_t, data_t, data_t> * Galerkin_RAP_3d(RESTRICT_TYPE rstr_typ
     seq_structMatrix<idx_t, data_t, data_t> * fine_mat_local = nullptr;
     seq_structMatrix<idx_t, data_t, data_t> * coar_mat_local = nullptr;
     
-    if (fine_mat.num_diag == 7 && prlg_type == Plg_linear_8cell && rstr_type == Rst_8cell) {// 下一层粗网格也是7对角
+    if (fine_mat.num_diag == 7 && ((prlg_type == Plg_linear_8cell && rstr_type == Rst_8cell)
+                                || (prlg_type == Plg_linear_4cell && rstr_type == Rst_4cell) )) {// 下一层粗网格也是7对角
         coar_mat = new par_structMatrix<idx_t, data_t, data_t>(fine_mat.comm_pkg->cart_comm, 7,
             coar_gx, coar_gy, coar_gz, num_procs[1], num_procs[0], num_procs[2]);
         fine_mat_local = fine_mat.local_matrix;
@@ -152,23 +177,49 @@ par_structMatrix<idx_t, data_t, data_t> * Galerkin_RAP_3d(RESTRICT_TYPE rstr_typ
     const bool y_lbdr = fine_mat.comm_pkg->ngbs_pid[J_L] == MPI_PROC_NULL, y_ubdr = fine_mat.comm_pkg->ngbs_pid[J_U] == MPI_PROC_NULL;
     const bool z_lbdr = fine_mat.comm_pkg->ngbs_pid[K_L] == MPI_PROC_NULL, z_ubdr = fine_mat.comm_pkg->ngbs_pid[K_U] == MPI_PROC_NULL;
 
-    if (fine_mat.num_diag == 7 && rstr_type == Rst_8cell && prlg_type == Plg_linear_8cell) {
+    if (fine_mat.num_diag == 7 && ((prlg_type == Plg_linear_8cell && rstr_type == Rst_8cell)
+                                || (prlg_type == Plg_linear_4cell && rstr_type == Rst_4cell) )) {
     // if (false) {
-        if (my_pid == 0) printf("  using \033[1;35m3d7-Galerkin\033[0m...\n");
-        RAP_3d7(fine_mat_local->data, f_lx + hx * 2, f_ly + hy * 2, f_lz + hz * 2,
+        if (rstr_type == Rst_4cell) {// 半粗化
+            if (my_pid == 0) printf("  using \033[1;35m3d7-Galerkin semiXY\033[0m...\n");
+            RAP_3d7_semiXY(fine_mat_local->data, f_lx + hx * 2, f_ly + hy * 2, f_lz + hz * 2,
                 coar_mat_local->data, c_lx + hx * 2, c_ly + hy * 2, c_lz + hz * 2,
                 hx, hx + c_lx,    hy, hy + c_ly,    hz, hz + c_lz,
                 x_lbdr, x_ubdr, y_lbdr, y_ubdr, z_lbdr, z_ubdr,
                 hx, hy, hz
-        );
+            );
+        }
+        else {
+            if (my_pid == 0) printf("  using \033[1;35m3d7-Galerkin full\033[0m...\n");
+            RAP_3d7(fine_mat_local->data, f_lx + hx * 2, f_ly + hy * 2, f_lz + hz * 2,
+                coar_mat_local->data, c_lx + hx * 2, c_ly + hy * 2, c_lz + hz * 2,
+                hx, hx + c_lx,    hy, hy + c_ly,    hz, hz + c_lz,
+                x_lbdr, x_ubdr, y_lbdr, y_ubdr, z_lbdr, z_ubdr,
+                hx, hy, hz
+            );
+        }
+       
     } else {
-        if (my_pid == 0) printf("  using \033[1;35m3d27-Galerkin\033[0m...\n");
-        RAP_3d27(fine_mat_local->data, f_lx + hx * 2, f_ly + hy * 2, f_lz + hz * 2,
+        if (rstr_type == Rst_4cell) {// 半粗化
+            assert(prlg_type == Plg_linear_4cell);
+            if (my_pid == 0) printf("  using \033[1;35m3d27-Galerkin semiXY\033[0m...\n");
+            RAP_3d27_semiXY(fine_mat_local->data, f_lx + hx * 2, f_ly + hy * 2, f_lz + hz * 2,
                 coar_mat_local->data, c_lx + hx * 2, c_ly + hy * 2, c_lz + hz * 2,
                 hx, hx + c_lx,    hy, hy + c_ly,    hz, hz + c_lz,
                 x_lbdr, x_ubdr, y_lbdr, y_ubdr, z_lbdr, z_ubdr,
                 hx, hy, hz
-        );
+            );
+        }
+        else {
+            assert(prlg_type == Plg_linear_8cell);
+            if (my_pid == 0) printf("  using \033[1;35m3d27-Galerkin full\033[0m...\n");
+            RAP_3d27(fine_mat_local->data, f_lx + hx * 2, f_ly + hy * 2, f_lz + hz * 2,
+                coar_mat_local->data, c_lx + hx * 2, c_ly + hy * 2, c_lz + hz * 2,
+                hx, hx + c_lx,    hy, hy + c_ly,    hz, hz + c_lz,
+                x_lbdr, x_ubdr, y_lbdr, y_ubdr, z_lbdr, z_ubdr,
+                hx, hy, hz
+            );
+        }
     }
 
     coar_mat->update_halo();
@@ -194,7 +245,7 @@ par_structMatrix<idx_t, data_t, data_t> * Galerkin_RAP_3d(RESTRICT_TYPE rstr_typ
     // }
 
     if (padding_mat != nullptr) delete padding_mat;
-    if (fine_mat.Diags_separated) coar_mat->separate_Diags();
+    if (fine_mat.DiagGroups_separated) coar_mat->separate_Diags();
     return coar_mat;
 }
 

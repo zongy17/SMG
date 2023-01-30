@@ -292,30 +292,37 @@ void CGSolver<idx_t, ksp_t, pc_t>::Standard(const par_structVector<idx_t, ksp_t>
     double gamma, eta, alpha, beta;
     double tmp_loc[4], tmp_glb[4];// 用作局部点积的存储，发送缓冲区和接受缓冲区
 
-    record[OPER] -= wall_time();
+    //record[OPER] -= wall_time();
     this->oper->Mult(x, r, false);
-    record[OPER] += wall_time();
-    record[AXPY] -= wall_time();
+    //record[OPER] += wall_time();
+    //record[AXPY] -= wall_time();
     vec_add(b, -1.0, r, r);
-    record[AXPY] += wall_time();
+    //record[AXPY] += wall_time();
     
+    // double ck_dot = 0.0;
+    // ck_dot = vec_dot<idx_t, ksp_t, double>(r, r);
+    // printf("before prec (b,b) = %.10e\n", ck_dot);
     if (this->prec) {// 有预条件子，则以预条件后的残差M^{-1}*r作为搜索方向 p = M^{-1}*r
+        u.set_val(0.0);
         record[PREC] -= wall_time();
         this->prec->Mult(r, u, true);
         record[PREC] += wall_time();
     } else {// 没有预条件则直接以残差r作为搜索方向
-        record[AXPY] -= wall_time();
+        //record[AXPY] -= wall_time();
         vec_copy(r, u);
-        record[AXPY] += wall_time();
+        //record[AXPY] += wall_time();
     }
-    record[AXPY] -= wall_time();
-    vec_copy(u, p);
-    record[AXPY] += wall_time();
-    record[OPER] -= wall_time();
-    this->oper->Mult(p, s, false);
-    record[OPER] += wall_time();
+    // ck_dot = vec_dot<idx_t, ksp_t, double>(u, u);
+    // printf("after  prec (x,x) = %.10e\n", ck_dot);
 
-    record[DOT] -= wall_time();
+    //record[AXPY] -= wall_time();
+    vec_copy(u, p);
+    //record[AXPY] += wall_time();
+    //record[OPER] -= wall_time();
+    this->oper->Mult(p, s, false);
+    //record[OPER] += wall_time();
+
+    //record[DOT] -= wall_time();
     tmp_loc[0] = seq_vec_dot<idx_t, ksp_t, double>(*(u.local_vector), *(r.local_vector));// γ的局部点积
     tmp_loc[1] = seq_vec_dot<idx_t, ksp_t, double>(*(s.local_vector), *(p.local_vector));// η的局部点积
     tmp_loc[2] = seq_vec_dot<idx_t, ksp_t, double>(*(b.local_vector), *(b.local_vector));
@@ -326,36 +333,43 @@ void CGSolver<idx_t, ksp_t, pc_t>::Standard(const par_structVector<idx_t, ksp_t>
     double norm_b = sqrt(tmp_glb[2]);
     double norm_r = sqrt(tmp_glb[3]);
     alpha = gamma / eta;
-    record[DOT] += wall_time();
+    //record[DOT] += wall_time();
 
     int & iter = this->final_iter;
     if (my_pid == 0) printf("iter %4d   ||b|| = %.16e ||r||/||b|| = %.16e\n", iter, norm_b, norm_r / norm_b);
 
     iter++;// 执行一次预条件子就算一次迭代
     for ( ; iter < this->max_iter; iter++) {
-        record[AXPY] -= wall_time();
+        //record[AXPY] -= wall_time();
         vec_add(x,  alpha, p, x);
         vec_add(r, -alpha, s, r);
-        record[AXPY] += wall_time();
+        //record[AXPY] += wall_time();
 
+
+        // double ck_dot = 0.0;
+        // ck_dot = vec_dot<idx_t, ksp_t, double>(r, r);
+        // printf("before prec (b,b) = %.10e\n", ck_dot);
         if (this->prec) {
+            u.set_val(0.0);
             record[PREC] -= wall_time();
             this->prec->Mult(r, u, true);
             record[PREC] += wall_time();
         } else {
-            record[AXPY] -= wall_time();
+            //record[AXPY] -= wall_time();
             vec_copy(r, u);
-            record[AXPY] += wall_time();
+            //record[AXPY] += wall_time();
         }
+        // ck_dot = vec_dot<idx_t, ksp_t, double>(u, u);
+        // printf("after  prec (x,x) = %.10e\n", ck_dot);
 
-        record[DOT] -= wall_time();
+        //record[DOT] -= wall_time();
         double old_gamma = gamma;
         tmp_loc[0] = seq_vec_dot<idx_t, ksp_t, double>(*(u.local_vector), *(r.local_vector));// γ的局部点积
         tmp_loc[1] = seq_vec_dot<idx_t, ksp_t, double>(*(r.local_vector), *(r.local_vector));
         MPI_Allreduce(tmp_loc, tmp_glb, 2, MPI_DOUBLE, MPI_SUM, comm);
         gamma = tmp_glb[0];
         norm_r = sqrt(tmp_glb[1]);
-        record[DOT] += wall_time();
+        //record[DOT] += wall_time();
 
         if (my_pid == 0) printf("iter %4d   alpha %.16e   ||r||/||b|| = %.16e\n", iter, alpha, norm_r / norm_b);
         if (norm_r / norm_b <= this->rel_tol || norm_r <= this->abs_tol) {
@@ -365,14 +379,14 @@ void CGSolver<idx_t, ksp_t, pc_t>::Standard(const par_structVector<idx_t, ksp_t>
 
         beta = gamma / old_gamma;
 
-        record[AXPY] -= wall_time();
+        //record[AXPY] -= wall_time();
         vec_add(u, beta, p, p);
-        record[AXPY] += wall_time();
-        record[OPER] -= wall_time();
+        //record[AXPY] += wall_time();
+        //record[OPER] -= wall_time();
         this->oper->Mult(p, s, false);
-        record[OPER] += wall_time();
+        //record[OPER] += wall_time();
 
-        record[DOT] -= wall_time();
+        //record[DOT] -= wall_time();
         eta = this->Dot(p, s);
         if (eta <= 0.0) {
             double dd = this->Dot(p, p);
@@ -380,7 +394,7 @@ void CGSolver<idx_t, ksp_t, pc_t>::Standard(const par_structVector<idx_t, ksp_t>
             if (eta == 0.0) break;
         }
         alpha = gamma / eta;
-        record[DOT] += wall_time();
+        //record[DOT] += wall_time();
     }
 }
 

@@ -5,20 +5,23 @@
 #include "par_struct_vec.hpp"
 #include "operator.hpp"
 
-template<typename idx_t, typename data_t, typename oper_t>
-class par_structMatrix : public Operator<idx_t, data_t, oper_t>  {
+// data_t是矩阵数据存储的精度，calc_t是矩阵运算时的精度
+template<typename idx_t, typename data_t, typename calc_t>
+class par_structMatrix : public Operator<idx_t, data_t, calc_t>  {
 public:
     idx_t num_diag;
     idx_t offset_x     , offset_y     , offset_z     ;// 该矩阵在全局中的偏移
     bool scaled = false;
     seq_structVector<idx_t, data_t> * sqrt_D = nullptr;
 
-    seq_structMatrix<idx_t, data_t, oper_t> * local_matrix;
-    mutable bool Diags_separated = false;
-    mutable seq_structVector<idx_t, data_t> ** Diags = nullptr;
-    mutable const data_t ** Diag_data_ptrs = nullptr;
+    seq_structMatrix<idx_t, data_t, calc_t> * local_matrix;
+
+    // 对角线打包 每四个一组
+    mutable bool DiagGroups_separated = false;
+    mutable idx_t DiagGroups_cnt = 0;
+    mutable seq_structMatrix<idx_t, data_t, calc_t> ** DiagGroups = nullptr;
     // spmv的函数指针
-    void (* SOA_spmv)(const idx_t, const idx_t, const idx_t, const data_t **, const oper_t *, oper_t *) = nullptr;
+    void (* SOA_spmv)(const idx_t, const idx_t, const idx_t, const data_t **, const calc_t *, calc_t *) = nullptr;
     const idx_t * stencil = nullptr;
 
     // 通信相关的
@@ -54,11 +57,11 @@ public:
     }
     void separate_Diags() const;
     void update_halo();
-    void Mult(const par_structVector<idx_t, oper_t> & x, 
-                    par_structVector<idx_t, oper_t> & y, bool use_zero_guess/* ignored */) const;
+    void Mult(const par_structVector<idx_t, calc_t> & x, 
+                    par_structVector<idx_t, calc_t> & y, bool use_zero_guess/* ignored */) const;
 protected:
-    void SOA_Mult(const seq_structVector<idx_t, oper_t> & x, seq_structVector<idx_t, oper_t> & y) const ;
-    void AOS_Mult(const seq_structVector<idx_t, oper_t> & x, seq_structVector<idx_t, oper_t> & y) const {
+    void SOA_Mult(const seq_structVector<idx_t, calc_t> & x, seq_structVector<idx_t, calc_t> & y) const ;
+    void AOS_Mult(const seq_structVector<idx_t, calc_t> & x, seq_structVector<idx_t, calc_t> & y) const {
         local_matrix->Mult(x, y, sqrt_D);
     }
 
@@ -85,10 +88,10 @@ public:
  * * * * * par_structMatrix * * * * *  
  */
 
-template<typename idx_t, typename data_t, typename oper_t>
-par_structMatrix<idx_t, data_t, oper_t>::par_structMatrix(MPI_Comm comm, idx_t num_d,
+template<typename idx_t, typename data_t, typename calc_t>
+par_structMatrix<idx_t, data_t, calc_t>::par_structMatrix(MPI_Comm comm, idx_t num_d,
     idx_t global_size_x, idx_t global_size_y, idx_t global_size_z, idx_t num_proc_x, idx_t num_proc_y, idx_t num_proc_z)
-    : Operator<idx_t, data_t, oper_t>(global_size_x, global_size_y, global_size_z, global_size_x, global_size_y, global_size_z), 
+    : Operator<idx_t, data_t, calc_t>(global_size_x, global_size_y, global_size_z, global_size_x, global_size_y, global_size_z), 
         num_diag(num_d)
 {
     // for GMG concern: must be fully divided by processors
@@ -104,7 +107,7 @@ par_structMatrix<idx_t, data_t, oper_t>::par_structMatrix(MPI_Comm comm, idx_t n
     offset_z = cart_ids[2] * global_size_z / num_proc_z;
 
     // 建立本地数据的内存
-    local_matrix = new seq_structMatrix<idx_t, data_t, oper_t>
+    local_matrix = new seq_structMatrix<idx_t, data_t, calc_t>
         (num_diag, global_size_x / num_proc_x, global_size_y / num_proc_y, global_size_z / num_proc_z, 1, 1, 1);
     
     setup_comm_pkg();// 3d7的时候不需要角上的数据通信
@@ -113,15 +116,15 @@ par_structMatrix<idx_t, data_t, oper_t>::par_structMatrix(MPI_Comm comm, idx_t n
     {
     case 7:
         stencil = stencil_offset_3d7;
-        SOA_spmv = SOA_spmv_3d7 <idx_t, data_t>;
+        if constexpr (sizeof(data_t) != sizeof(calc_t)) SOA_spmv = SOA_spmv_3d7_Cal32Stg16;
         break;
     case 19:
         stencil = stencil_offset_3d19;
-        SOA_spmv = SOA_spmv_3d19<idx_t, data_t>;
+        if constexpr (sizeof(data_t) != sizeof(calc_t)) SOA_spmv = SOA_spmv_3d19_Cal32Stg16;
         break;
     case 27:
         stencil = stencil_offset_3d27;
-        SOA_spmv = SOA_spmv_3d27<idx_t, data_t>;
+        if constexpr (sizeof(data_t) != sizeof(calc_t)) SOA_spmv = SOA_spmv_3d27_Cal32Stg16;
         break;
     default:
         printf("not supported number of diagonals %d\n", num_diag);
@@ -129,13 +132,13 @@ par_structMatrix<idx_t, data_t, oper_t>::par_structMatrix(MPI_Comm comm, idx_t n
     }
 }
 
-template<typename idx_t, typename data_t, typename oper_t>
-par_structMatrix<idx_t, data_t, oper_t>::par_structMatrix(const par_structMatrix & model) 
-    : Operator<idx_t, data_t, oper_t>(  model.input_dim[0], model.input_dim[1], model.input_dim[2], 
+template<typename idx_t, typename data_t, typename calc_t>
+par_structMatrix<idx_t, data_t, calc_t>::par_structMatrix(const par_structMatrix & model) 
+    : Operator<idx_t, data_t, calc_t>(  model.input_dim[0], model.input_dim[1], model.input_dim[2], 
                                         model.output_dim[0], model.output_dim[1], model.output_dim[2]),
         num_diag(model.num_diag), offset_x(model.offset_x), offset_y(model.offset_y), offset_z(model.offset_z)
 {
-    local_matrix = new seq_structMatrix<idx_t, data_t, oper_t>(*(model.local_matrix));
+    local_matrix = new seq_structMatrix<idx_t, data_t, calc_t>(*(model.local_matrix));
     // 浅拷贝
     comm_pkg = model.comm_pkg;
     own_comm_pkg = false;
@@ -143,8 +146,8 @@ par_structMatrix<idx_t, data_t, oper_t>::par_structMatrix(const par_structMatrix
     stencil = model.stencil;
 }
 
-template<typename idx_t, typename data_t, typename oper_t>
-par_structMatrix<idx_t, data_t, oper_t>::~par_structMatrix()
+template<typename idx_t, typename data_t, typename calc_t>
+par_structMatrix<idx_t, data_t, calc_t>::~par_structMatrix()
 {
     delete local_matrix;
     local_matrix = nullptr;
@@ -152,13 +155,12 @@ par_structMatrix<idx_t, data_t, oper_t>::~par_structMatrix()
         delete comm_pkg;
         comm_pkg = nullptr;
     }
-    if (Diags != nullptr) {
-        for (idx_t i = 0; i < num_diag; i++) {
-            delete Diags[i];
-            Diags[i] = nullptr;
+    if (DiagGroups != nullptr) {
+        for (idx_t i = 0; i < DiagGroups_cnt; i++) {
+            delete DiagGroups[i];
+            DiagGroups[i] = nullptr;
         }
-        delete [] Diags;
-        delete [] Diag_data_ptrs;
+        delete [] DiagGroups;
     }
     if (scaled) {
         assert(sqrt_D != nullptr);
@@ -166,8 +168,8 @@ par_structMatrix<idx_t, data_t, oper_t>::~par_structMatrix()
     }
 }
 
-template<typename idx_t, typename data_t, typename oper_t>
-void par_structMatrix<idx_t, data_t, oper_t>::setup_cart_comm(MPI_Comm comm, 
+template<typename idx_t, typename data_t, typename calc_t>
+void par_structMatrix<idx_t, data_t, calc_t>::setup_cart_comm(MPI_Comm comm, 
     idx_t num_proc_x, idx_t num_proc_y, idx_t num_proc_z, bool unblk)
 {
     // bool relay_mode = unblk ? false : true;
@@ -201,17 +203,17 @@ void par_structMatrix<idx_t, data_t, oper_t>::setup_cart_comm(MPI_Comm comm,
 #endif
 }
 
-template<typename idx_t, typename data_t, typename oper_t>
-void par_structMatrix<idx_t, data_t, oper_t>::setup_comm_pkg(bool need_corner)
+template<typename idx_t, typename data_t, typename calc_t>
+void par_structMatrix<idx_t, data_t, calc_t>::setup_comm_pkg(bool need_corner)
 {
     MPI_Datatype (&send_subarray)[NUM_NEIGHBORS] = comm_pkg->send_subarray;
     MPI_Datatype (&recv_subarray)[NUM_NEIGHBORS] = comm_pkg->recv_subarray;
     MPI_Datatype & mpi_scalar_type               = comm_pkg->mpi_scalar_type;
     // 建立通信结构：注意data的排布从内到外依次为diag(3)->k(2)->i(1)->j(0)，按照C-order
-    if     (sizeof(data_t) == 16)   comm_pkg->mpi_scalar_type = MPI_LONG_DOUBLE;
-    else if (sizeof(data_t) == 8)   comm_pkg->mpi_scalar_type = MPI_DOUBLE;
-    else if (sizeof(data_t) == 4)   comm_pkg->mpi_scalar_type = MPI_FLOAT;
-    else if (sizeof(data_t) == 2)   comm_pkg->mpi_scalar_type = MPI_SHORT;
+    if      constexpr (sizeof(data_t) == 16)  comm_pkg->mpi_scalar_type = MPI_LONG_DOUBLE;
+    else if constexpr (sizeof(data_t) == 8)   comm_pkg->mpi_scalar_type = MPI_DOUBLE;
+    else if constexpr (sizeof(data_t) == 4)   comm_pkg->mpi_scalar_type = MPI_FLOAT;
+    else if constexpr (sizeof(data_t) == 2)   comm_pkg->mpi_scalar_type = MPI_SHORT;
     else { printf("INVALID data_t when creating subarray, sizeof %ld bytes\n", sizeof(data_t)); MPI_Abort(MPI_COMM_WORLD, -2001); }
 
     idx_t size[4] = {   local_matrix->local_y + 2 * local_matrix->halo_y,
@@ -294,8 +296,8 @@ void par_structMatrix<idx_t, data_t, oper_t>::setup_comm_pkg(bool need_corner)
     }
 }
 
-template<typename idx_t, typename data_t, typename oper_t>
-void par_structMatrix<idx_t, data_t, oper_t>::update_halo()
+template<typename idx_t, typename data_t, typename calc_t>
+void par_structMatrix<idx_t, data_t, calc_t>::update_halo()
 {
 #ifdef DEBUG
     local_matrix->init_debug(offset_x, offset_y, offset_z);
@@ -313,8 +315,8 @@ void par_structMatrix<idx_t, data_t, oper_t>::update_halo()
 #endif
 }
 
-template<typename idx_t, typename data_t, typename oper_t>
-void par_structMatrix<idx_t, data_t, oper_t>::Mult(const par_structVector<idx_t, oper_t> & x, par_structVector<idx_t, oper_t> & y,
+template<typename idx_t, typename data_t, typename calc_t>
+void par_structMatrix<idx_t, data_t, calc_t>::Mult(const par_structVector<idx_t, calc_t> & x, par_structVector<idx_t, calc_t> & y,
     bool use_zero_guess/* ignored */) const
 {
     assert( this->input_dim[0] == x.global_size_x && this->output_dim[0] == y.global_size_x &&
@@ -330,38 +332,49 @@ void par_structMatrix<idx_t, data_t, oper_t>::Mult(const par_structVector<idx_t,
     double bytes = local_matrix->local_x * local_matrix->local_y
                  * local_matrix->local_z * num_diag * sizeof(data_t);
     bytes += (x.local_vector->local_x + x.local_vector->halo_x * 2) * (x.local_vector->local_y + x.local_vector->halo_y * 2)
-           * (x.local_vector->local_z + x.local_vector->halo_z * 2) * 2 * sizeof(oper_t);
+           * (x.local_vector->local_z + x.local_vector->halo_z * 2) * 2 * sizeof(calc_t);
     bytes *= num_procs;
     bytes /= (1024 * 1024 * 1024);// GB
     MPI_Barrier(y.comm_pkg->cart_comm);
+    int warm_cnt = 5;
+    for (int te = 0; te < warm_cnt; te++) {
+        if constexpr (sizeof(data_t) != sizeof(calc_t))
+            SOA_Mult(*(x.local_vector), *(y.local_vector));
+        else
+            AOS_Mult(*(x.local_vector), *(y.local_vector));
+    }
+    MPI_Barrier(y.comm_pkg->cart_comm);
     double t = wall_time();
+    int test_cnt = 20;
+    for (int te = 0; te < test_cnt; te++) {
 #endif
-
     // do computation
-    if (sizeof(data_t) != sizeof(oper_t))
-        MPI_Abort(x.comm_pkg->cart_comm, -79);
+    if constexpr (sizeof(data_t) != sizeof(calc_t))
+        SOA_Mult(*(x.local_vector), *(y.local_vector));
     else
         AOS_Mult(*(x.local_vector), *(y.local_vector));
-
 #ifdef PROFILE
+    }
     t = wall_time() - t;
+    t /= test_cnt;
     double mint, maxt;
     MPI_Allreduce(&t, &maxt, 1, MPI_DOUBLE, MPI_MAX, y.comm_pkg->cart_comm);
     MPI_Allreduce(&t, &mint, 1, MPI_DOUBLE, MPI_MIN, y.comm_pkg->cart_comm);
-    if (my_pid == 0) printf("SpMv data_t %ld oper_t %ld diag %d total %.2f GB time %.5f/%.5f s BW %.2f/%.2f GB/s\n",
-                sizeof(data_t), sizeof(oper_t), num_diag, bytes, mint, maxt, bytes/maxt, bytes/mint);
+    // mint = maxt = t;
+    if (my_pid == 0) printf("SpMv data_t %ld calc_t %ld diag %d total %.2f GB time %.5f/%.5f s BW %.2f/%.2f GB/s\n",
+                sizeof(data_t), sizeof(calc_t), num_diag, bytes, mint, maxt, bytes/maxt, bytes/mint);
 #endif
 }
 
-template<typename idx_t, typename data_t, typename oper_t>
-void par_structMatrix<idx_t, data_t, oper_t>::SOA_Mult(const seq_structVector<idx_t, oper_t> & x, seq_structVector<idx_t, oper_t> & y) const
+template<typename idx_t, typename data_t, typename calc_t>
+void par_structMatrix<idx_t, data_t, calc_t>::SOA_Mult(const seq_structVector<idx_t, calc_t> & x, seq_structVector<idx_t, calc_t> & y) const
 {
     CHECK_LOCAL_HALO(*local_matrix, x);
     CHECK_LOCAL_HALO(x , y);
-    assert(Diags_separated);
+    assert(DiagGroups_separated);
     assert(SOA_spmv);
-    const oper_t * x_data = x.data;
-    oper_t * y_data = y.data;
+    const calc_t * x_data = x.data;
+    calc_t * y_data = y.data;
 
     const idx_t ibeg = x.halo_x, iend = ibeg + x.local_x,
                 jbeg = x.halo_y, jend = jbeg + x.local_y,
@@ -371,24 +384,26 @@ void par_structMatrix<idx_t, data_t, oper_t>::SOA_Mult(const seq_structVector<id
 
     #pragma omp parallel
     {
-        const data_t * A_jik[num_diag];
-        #pragma omp parallel for collapse(2) schedule(static)
+        const data_t * A_jik[DiagGroups_cnt];
+        #pragma omp for collapse(2) schedule(static)
         for (idx_t j = jbeg; j < jend; j++)
         for (idx_t i = ibeg; i < iend; i++) {
             const idx_t vec_off = j * vec_ki_size + i * vec_k_size + kbeg;// 一定要有kbeg
-            const oper_t * x_jik = x_data + vec_off;
-            oper_t * y_jik = y_data + vec_off;
-            #pragma GCC unroll (4)
-            for (idx_t id = 0; id < num_diag; id++)
-                A_jik[id] = Diag_data_ptrs[id] + vec_off;
+            const calc_t * x_jik = x_data + vec_off;
+            calc_t * y_jik = y_data + vec_off;
+            for (idx_t g = 0; g < DiagGroups_cnt; g++)
+                // A_jik[g] = DG_data[g] + j * slice_dki[g]
+                //     + i * slice_dk[g] + kbeg * nd[g];
+                A_jik[g] = DiagGroups[g]->data + j * DiagGroups[g]->slice_dki_size
+                        + i * DiagGroups[g]->slice_dk_size + kbeg * DiagGroups[g]->num_diag;
             SOA_spmv(col_height, vec_k_size, vec_ki_size, A_jik, x_jik, y_jik);
         }
     }
 }
 
-template<typename idx_t, typename data_t, typename oper_t>
-void par_structMatrix<idx_t, data_t, oper_t>::read_data(const std::string pathname) {
-    seq_structMatrix<idx_t, data_t, oper_t> & A_local = *local_matrix;
+template<typename idx_t, typename data_t, typename calc_t>
+void par_structMatrix<idx_t, data_t, calc_t>::read_data(const std::string pathname) {
+    seq_structMatrix<idx_t, data_t, calc_t> & A_local = *local_matrix;
 
     assert( (sizeof(data_t) ==16 && comm_pkg->mpi_scalar_type == MPI_LONG_DOUBLE) || 
             (sizeof(data_t) == 4 && comm_pkg->mpi_scalar_type == MPI_FLOAT)  ||
@@ -449,9 +464,9 @@ void par_structMatrix<idx_t, data_t, oper_t>::read_data(const std::string pathna
     update_halo();
 }
 
-template<typename idx_t, typename data_t, typename oper_t>
-void par_structMatrix<idx_t, data_t, oper_t>::write_data(const std::string pathname, const std::string prefix) {
-    seq_structMatrix<idx_t, data_t, oper_t> & A_local = *local_matrix;
+template<typename idx_t, typename data_t, typename calc_t>
+void par_structMatrix<idx_t, data_t, calc_t>::write_data(const std::string pathname, const std::string prefix) {
+    seq_structMatrix<idx_t, data_t, calc_t> & A_local = *local_matrix;
     assert( (sizeof(data_t) ==16 && comm_pkg->mpi_scalar_type == MPI_LONG_DOUBLE) || 
             (sizeof(data_t) == 4 && comm_pkg->mpi_scalar_type == MPI_FLOAT)  ||
             (sizeof(data_t) == 8 && comm_pkg->mpi_scalar_type == MPI_DOUBLE) ||
@@ -509,8 +524,8 @@ void par_structMatrix<idx_t, data_t, oper_t>::write_data(const std::string pathn
     free(buf);
 }
 
-template<typename idx_t, typename data_t, typename oper_t>
-void par_structMatrix<idx_t, data_t, oper_t>::set_val(data_t val, bool halo_set) {
+template<typename idx_t, typename data_t, typename calc_t>
+void par_structMatrix<idx_t, data_t, calc_t>::set_val(data_t val, bool halo_set) {
     if (halo_set) {
         const idx_t tot_len = (local_matrix->local_x + local_matrix->halo_x * 2)
                             * (local_matrix->local_y + local_matrix->halo_y * 2)
@@ -522,15 +537,15 @@ void par_structMatrix<idx_t, data_t, oper_t>::set_val(data_t val, bool halo_set)
         *(local_matrix) = val;
 }
 
-template<typename idx_t, typename data_t, typename oper_t>
-void par_structMatrix<idx_t, data_t, oper_t>::set_diag_val(idx_t d, data_t val) {
+template<typename idx_t, typename data_t, typename calc_t>
+void par_structMatrix<idx_t, data_t, calc_t>::set_diag_val(idx_t d, data_t val) {
     local_matrix->set_diag_val(d, val);
 }
 
-template<typename idx_t, typename data_t, typename oper_t>
-void par_structMatrix<idx_t, data_t, oper_t>::init_random_base2(idx_t max_power)
+template<typename idx_t, typename data_t, typename calc_t>
+void par_structMatrix<idx_t, data_t, calc_t>::init_random_base2(idx_t max_power)
 {
-    seq_structMatrix<idx_t, data_t, oper_t> & mat = *(local_matrix);
+    seq_structMatrix<idx_t, data_t, calc_t> & mat = *(local_matrix);
     const idx_t jbeg = mat.halo_y, jend = jbeg + mat.local_y,
                 ibeg = mat.halo_x, iend = ibeg + mat.local_x,
                 kbeg = mat.halo_z, kend = kbeg + mat.local_z;
@@ -554,34 +569,56 @@ void par_structMatrix<idx_t, data_t, oper_t>::init_random_base2(idx_t max_power)
     }
 }
 
-template<typename idx_t, typename data_t, typename oper_t>
-void par_structMatrix<idx_t, data_t, oper_t>::separate_Diags() const
+template<typename idx_t, typename data_t, typename calc_t>
+void par_structMatrix<idx_t, data_t, calc_t>::separate_Diags() const
 {
-    assert(Diags_separated == false && Diags == nullptr && Diag_data_ptrs == nullptr);
+    assert(DiagGroups_separated == false && DiagGroups == nullptr);
 
-    Diags = new seq_structVector<idx_t, data_t> * [num_diag];
-    Diag_data_ptrs = new const data_t * [num_diag];
-    for (idx_t id = 0; id < num_diag; id++) {
-        Diags[id] = 
-            new seq_structVector<idx_t, data_t>(local_matrix->local_x, local_matrix->local_y, local_matrix->local_z,
-                                                local_matrix->halo_x , local_matrix->halo_y , local_matrix->halo_z );
-        Diag_data_ptrs[id] = Diags[id]->data;
+    DiagGroups_cnt = num_diag / NEON_MAX_STRIDE;// number of groups
+    idx_t last_group = num_diag - NEON_MAX_STRIDE * DiagGroups_cnt;
+    if (last_group > 0) DiagGroups_cnt ++;// additional group to contain remaining diags
+
+    DiagGroups = new seq_structMatrix<idx_t, data_t, calc_t> * [DiagGroups_cnt];
+    for (idx_t id = 0; id < DiagGroups_cnt; id++) {
+        if (id == DiagGroups_cnt - 1 && last_group > 0)
+            DiagGroups[id] = new seq_structMatrix<idx_t, data_t, calc_t>
+                (last_group   , local_matrix->local_x, local_matrix->local_y, local_matrix->local_z,
+                                local_matrix->halo_x , local_matrix->halo_y , local_matrix->halo_z);
+        else
+            DiagGroups[id] = new seq_structMatrix<idx_t, data_t, calc_t>
+                (NEON_MAX_STRIDE,local_matrix->local_x, local_matrix->local_y, local_matrix->local_z,
+                                local_matrix->halo_x , local_matrix->halo_y , local_matrix->halo_z);
     }
 
-    idx_t tot_elem = (local_matrix->local_x + local_matrix->halo_x * 2)
-                    *(local_matrix->local_y + local_matrix->halo_y * 2)
-                    *(local_matrix->local_z + local_matrix->halo_z * 2);
-
+    const idx_t tot_elems = (local_matrix->local_y + local_matrix->halo_y * 2)
+                        *   (local_matrix->local_x + local_matrix->halo_x * 2)
+                        *   (local_matrix->local_z + local_matrix->halo_z * 2);
     #pragma omp parallel for schedule(static)
-    for (idx_t ie = 0; ie < tot_elem; ie++) {
-        for (idx_t id = 0; id < num_diag; id++)
-            Diags[id]->data[ie] = local_matrix->data[ie * num_diag + id];
+    for (idx_t e = 0; e < tot_elems; e++) {
+        const data_t * aos_ptr = local_matrix->data + e * local_matrix->num_diag;
+        data_t * soa_ptrs[DiagGroups_cnt];
+        for (idx_t g = 0; g < DiagGroups_cnt; g++)
+            soa_ptrs[g] = DiagGroups[g]->data + e * DiagGroups[g]->num_diag;
+
+        for (idx_t d = 0; d < num_diag; d++) {
+            // continuous
+            idx_t gid = d / NEON_MAX_STRIDE;// group id
+            idx_t lid = d % NEON_MAX_STRIDE;// land id
+
+            // cyclic
+            // idx_t gid = d % DiagGroups_cnt;// group id
+            // idx_t lid = d / DiagGroups_cnt;// land id
+            soa_ptrs[gid][lid] = aos_ptr[d];
+        }
     }
-    Diags_separated = true;
+    DiagGroups_separated = true;
+    if (num_diag == 7) assert(DiagGroups_cnt == 2);
+    else if (num_diag == 19) assert(DiagGroups_cnt == 5);
+    else if (num_diag == 27) assert(DiagGroups_cnt == 7);
 }
 
-template<typename idx_t, typename data_t, typename oper_t>
-bool par_structMatrix<idx_t, data_t, oper_t>::check_Dirichlet()
+template<typename idx_t, typename data_t, typename calc_t>
+bool par_structMatrix<idx_t, data_t, calc_t>::check_Dirichlet()
 {
     // 确定各维上是否是边界
     const bool x_lbdr = comm_pkg->ngbs_pid[I_L] == MPI_PROC_NULL, x_ubdr = comm_pkg->ngbs_pid[I_U] == MPI_PROC_NULL;
@@ -676,8 +713,8 @@ bool par_structMatrix<idx_t, data_t, oper_t>::check_Dirichlet()
     return true;
 }
 
-template<typename idx_t, typename data_t, typename oper_t>
-void par_structMatrix<idx_t, data_t, oper_t>::set_boundary()
+template<typename idx_t, typename data_t, typename calc_t>
+void par_structMatrix<idx_t, data_t, calc_t>::set_boundary()
 {
     // 确定各维上是否是边界
     const bool x_lbdr = comm_pkg->ngbs_pid[I_L] == MPI_PROC_NULL, x_ubdr = comm_pkg->ngbs_pid[I_U] == MPI_PROC_NULL;
@@ -770,8 +807,8 @@ void par_structMatrix<idx_t, data_t, oper_t>::set_boundary()
     }
 }
 
-template<typename idx_t, typename data_t, typename oper_t>
-void par_structMatrix<idx_t, data_t, oper_t>::scale(const data_t scaled_diag)
+template<typename idx_t, typename data_t, typename calc_t>
+void par_structMatrix<idx_t, data_t, calc_t>::scale(const data_t scaled_diag)
 {
     assert(scaled == false);
     sqrt_D = new seq_structVector<idx_t, data_t>(
@@ -791,7 +828,7 @@ void par_structMatrix<idx_t, data_t, oper_t>::scale(const data_t scaled_diag)
     if (my_pid == 0) printf("parMat scaled => diagonal as %.2e\n", scaled_diag);
 
     CHECK_LOCAL_HALO(*sqrt_D, *local_matrix);
-    assert(num_diag == 7);
+    const idx_t diag_id = num_diag >> 1;// 7(3), 19(9), 27(13)
     const idx_t vec_ki_size = sqrt_D->slice_ki_size, vec_k_size = sqrt_D->slice_k_size;
     const idx_t slice_dki_size = local_matrix->slice_dki_size, slice_dk_size = local_matrix->slice_dk_size;
     // 提取对角线元素，开方
@@ -799,7 +836,7 @@ void par_structMatrix<idx_t, data_t, oper_t>::scale(const data_t scaled_diag)
     for (idx_t j = jbeg; j < jend; j++)
     for (idx_t i = ibeg; i < iend; i++)
     for (idx_t k = kbeg; k < kend; k++) {
-        data_t tmp = local_matrix->data[j * slice_dki_size + i * slice_dk_size + k * num_diag + 3];
+        data_t tmp = local_matrix->data[j * slice_dki_size + i * slice_dk_size + k * num_diag + diag_id];
         assert(tmp > 0.0);
         tmp /= scaled_diag;
         sqrt_D->data[j * vec_ki_size + i * vec_k_size + k] = sqrt(tmp);
@@ -819,12 +856,11 @@ void par_structMatrix<idx_t, data_t, oper_t>::scale(const data_t scaled_diag)
             idx_t ngb_j = j + stencil[d * 3 + 0];
             idx_t ngb_i = i + stencil[d * 3 + 1];
             idx_t ngb_k = k + stencil[d * 3 + 2];
-            if      (x_lbdr && ngb_i <  ibeg) assert(tmp == 0.0);
-            else if (x_ubdr && ngb_i >= iend) assert(tmp == 0.0);
-            else if (y_lbdr && ngb_j <  jbeg) assert(tmp == 0.0);
-            else if (y_ubdr && ngb_j >= jend) assert(tmp == 0.0);
-            else if (z_lbdr && ngb_k <  kbeg) assert(tmp == 0.0);
-            else if (z_ubdr && ngb_k >= kend) assert(tmp == 0.0);
+            if ((x_lbdr && ngb_i <  ibeg) || (x_ubdr && ngb_i >= iend) ||
+                (y_lbdr && ngb_j <  jbeg) || (y_ubdr && ngb_j >= jend) ||
+                (z_lbdr && ngb_k <  kbeg) || (z_ubdr && ngb_k >= kend)) {
+                assert(tmp == 0.0);
+            }
             else {
                 data_t my_sqrt_Dval = sqrt_D->data[    j * vec_ki_size +     i * vec_k_size +     k];
                 data_t ngb_sqrt_Dval= sqrt_D->data[ngb_j * vec_ki_size + ngb_i * vec_k_size + ngb_k];
@@ -839,22 +875,18 @@ void par_structMatrix<idx_t, data_t, oper_t>::scale(const data_t scaled_diag)
     scaled = true;
 }
 
-template<typename idx_t, typename data_t, typename oper_t>
-bool par_structMatrix<idx_t, data_t, oper_t>::check_scaling(const data_t scaled_diag)
+template<typename idx_t, typename data_t, typename calc_t>
+bool par_structMatrix<idx_t, data_t, calc_t>::check_scaling(const data_t scaled_diag)
 {
     const idx_t ibeg = local_matrix->halo_x, iend = ibeg + local_matrix->local_x,
                 jbeg = local_matrix->halo_y, jend = jbeg + local_matrix->local_y,
                 kbeg = local_matrix->halo_z, kend = kbeg + local_matrix->local_z;
-    idx_t id = -1;
-    if (num_diag == 27)
-        id = 13;
-    else if (num_diag == 7)
-        id = 3;
-    
+    const idx_t id = num_diag >> 1;
+
     assert(id != -1);
     int my_pid; MPI_Comm_rank(MPI_COMM_WORLD, &my_pid);
 
-    #pragma omp parallel for collapse(2) schedule(static)
+    #pragma omp parallel for collapse(3) schedule(static)
     for (idx_t j = jbeg; j < jend; j++)
     for (idx_t i = ibeg; i < iend; i++)
     for (idx_t k = kbeg; k < kend; k++) {
@@ -871,8 +903,8 @@ bool par_structMatrix<idx_t, data_t, oper_t>::check_scaling(const data_t scaled_
 
 }
 
-template<typename idx_t, typename data_t, typename oper_t>
-void par_structMatrix<idx_t, data_t, oper_t>::write_CSR_bin(const std::string pathname) const {
+template<typename idx_t, typename data_t, typename calc_t>
+void par_structMatrix<idx_t, data_t, calc_t>::write_CSR_bin(const std::string pathname) const {
     int num_proc; MPI_Comm_size(comm_pkg->cart_comm, &num_proc);
     assert(num_proc == 1);
     if (strstr(pathname.c_str(), "GRAPES")) assert(sizeof(data_t) == 4);
@@ -940,10 +972,10 @@ void par_structMatrix<idx_t, data_t, oper_t>::write_CSR_bin(const std::string pa
     fclose(fp);
 }
 
-template<typename idx_t, typename data_t, typename oper_t>
-void par_structMatrix<idx_t, data_t, oper_t>::write_struct_AOS_bin(const std::string pathname, const std::string file) const {
+template<typename idx_t, typename data_t, typename calc_t>
+void par_structMatrix<idx_t, data_t, calc_t>::write_struct_AOS_bin(const std::string pathname, const std::string file) const {
     int my_pid; MPI_Comm_rank(comm_pkg->cart_comm, &my_pid);
-    seq_structMatrix<idx_t, data_t, oper_t> & mat = *local_matrix;
+    seq_structMatrix<idx_t, data_t, calc_t> & mat = *local_matrix;
 
     idx_t lx = mat.local_x, ly = mat.local_y, lz = mat.local_z;
     idx_t tot_len = lx * ly * lz * num_diag;

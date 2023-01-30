@@ -31,8 +31,8 @@ public:
     void set_halo(data_t val);
 };
 
-// 矩阵需要两种精度：数据的存储精度data_t，和计算时的精度oper_t
-template<typename idx_t, typename data_t, typename oper_t>
+// 矩阵需要两种精度：数据的存储精度data_t，和计算时的精度calc_t
+template<typename idx_t, typename data_t, typename calc_t>
 class seq_structMatrix {
 public:
     idx_t num_diag;// 矩阵对角线数（19）
@@ -80,9 +80,8 @@ public:
     }
 
     // 矩阵接受的SpMV运算是以操作精度的
-    // void Mult(const seq_structVector<idx_t, oper_t> & x, seq_structVector<idx_t, oper_t> & y) const;
-    void Mult(const seq_structVector<idx_t, oper_t> & x, seq_structVector<idx_t, oper_t> & y,
-            const seq_structVector<idx_t, oper_t> * sqrtD_ptr = nullptr) const;
+    void Mult(const seq_structVector<idx_t, calc_t> & x, seq_structVector<idx_t, calc_t> & y,
+            const seq_structVector<idx_t, calc_t> * sqrtD_ptr = nullptr) const;
     void (*spmv)(const idx_t num, const idx_t vec_k_size, const idx_t vec_ki_size,
         const data_t * A_jik, const data_t * x_jik, data_t * y_jik, const data_t * dummy) = nullptr;
     void (*spmv_scaled)(const idx_t num, const idx_t vec_k_size, const idx_t vec_ki_size,
@@ -377,8 +376,8 @@ void seq_vec_elemwise_div(seq_structVector<idx_t, data_t1> & inout_vec, const se
 #include "kernels_3d7.hpp"
 #include "kernels_3d19.hpp"
 #include "kernels_3d27.hpp"
-template<typename idx_t, typename data_t, typename oper_t>
-seq_structMatrix<idx_t, data_t, oper_t>::seq_structMatrix(idx_t num_d, idx_t lx, idx_t ly, idx_t lz, idx_t hx, idx_t hy, idx_t hz)
+template<typename idx_t, typename data_t, typename calc_t>
+seq_structMatrix<idx_t, data_t, calc_t>::seq_structMatrix(idx_t num_d, idx_t lx, idx_t ly, idx_t lz, idx_t hx, idx_t hy, idx_t hz)
     : num_diag(num_d), local_x(lx), local_y(ly), local_z(lz), halo_x(hx), halo_y(hy), halo_z(hz)
 {
     idx_t tot = num_diag * (local_x + 2 * halo_x) * (local_y + 2 * halo_y) * (local_z + 2 * halo_z);
@@ -397,8 +396,8 @@ seq_structMatrix<idx_t, data_t, oper_t>::seq_structMatrix(idx_t num_d, idx_t lx,
     }
 }
 
-template<typename idx_t, typename data_t, typename oper_t>
-seq_structMatrix<idx_t, data_t, oper_t>::seq_structMatrix(const seq_structMatrix & model)
+template<typename idx_t, typename data_t, typename calc_t>
+seq_structMatrix<idx_t, data_t, calc_t>::seq_structMatrix(const seq_structMatrix & model)
     : num_diag(model.num_diag),
       local_x(model.local_x), local_y(model.local_y), local_z(model.local_z),
       halo_x (model.halo_x) , halo_y (model.halo_y ), halo_z (model.halo_z) , 
@@ -408,37 +407,14 @@ seq_structMatrix<idx_t, data_t, oper_t>::seq_structMatrix(const seq_structMatrix
     data = new data_t[tot];
 }
 
-template<typename idx_t, typename data_t, typename oper_t>
-seq_structMatrix<idx_t, data_t, oper_t>::~seq_structMatrix() {
+template<typename idx_t, typename data_t, typename calc_t>
+seq_structMatrix<idx_t, data_t, calc_t>::~seq_structMatrix() {
     delete data;
     data = nullptr;
 }
 
-#ifdef DEBUG
-template<typename idx_t, typename data_t>
-void seq_structMatrix<idx_t, data_t>::init_debug(idx_t off_x, idx_t off_y, idx_t off_z) 
-{
-    idx_t tot = slice_dki_size * (local_y + 2 * halo_y);
-    for (idx_t i = 0; i < tot; i++)
-        data[i] = 0.0;
-
-    idx_t   xbeg = halo_x, xend = xbeg + local_x,
-            ybeg = halo_y, yend = ybeg + local_y,
-            zbeg = halo_z, zend = zbeg + local_z;
-    for (idx_t j = ybeg; j < yend; j++) {
-        for (idx_t i = xbeg; i < xend; i++) {
-            for (idx_t k = zbeg; k < zend; k++)
-                for (idx_t d = 0; d < num_diag; d++) {
-                    data[d + k * num_diag + i * slice_dk_size + j * slice_dki_size] 
-                        = 100.0 * (off_x + i - xbeg) + off_y + j - ybeg + 1e-2 * (off_z + k - zbeg) + 1e-4 * d;
-            }
-        }
-    }
-}
-#endif
-
-template<typename idx_t, typename data_t, typename oper_t>
-void seq_structMatrix<idx_t, data_t, oper_t>::print_level_diag(idx_t ilev, idx_t idiag) 
+template<typename idx_t, typename data_t, typename calc_t>
+void seq_structMatrix<idx_t, data_t, calc_t>::print_level_diag(idx_t ilev, idx_t idiag) 
 {
     assert(ilev >= 0 && ilev < local_z && idiag >= 0 && idiag < num_diag);
     idx_t   xbeg = 0, xend = xbeg + local_x + 2 * halo_x,
@@ -452,37 +428,10 @@ void seq_structMatrix<idx_t, data_t, oper_t>::print_level_diag(idx_t ilev, idx_t
     }
 }
 
-// template<typename idx_t, typename data_t, typename oper_t>
-// void seq_structMatrix<idx_t, data_t, oper_t>::Mult(const seq_structVector<idx_t, oper_t> & x, seq_structVector<idx_t, oper_t> & y) const
-// {
-//     CHECK_LOCAL_HALO(*this, x);
-//     CHECK_LOCAL_HALO(x , y);
-
-//     const data_t * A = data;
-//     const oper_t * x_data = x.data;
-//     oper_t * y_data = y.data;
-
-//     idx_t   ibeg = halo_x, iend = ibeg + local_x,
-//             jbeg = halo_y, jend = jbeg + local_y,
-//             kbeg = halo_z, kend = kbeg + local_z;
-//     idx_t vec_k_size = x.slice_k_size, vec_ki_size = x.slice_ki_size;
-//     const idx_t col_height = kend - kbeg;
-
-//     #pragma omp parallel for collapse(2) schedule(static)
-//     for (idx_t j = jbeg; j < jend; j++)
-//     for (idx_t i = ibeg; i < iend; i++) {
-//         const data_t * A_jik = A + j * slice_dki_size + i * slice_dk_size + kbeg * num_diag;
-//         const idx_t vec_off = j * vec_ki_size + i * vec_k_size + kbeg;
-//         const oper_t * x_jik = x_data + vec_off;
-//         oper_t * y_jik = y_data + vec_off;
-//         kernel(col_height, vec_k_size, vec_ki_size, A_jik, x_jik, y_jik);
-//     }
-// }
-
-template<typename idx_t, typename data_t, typename oper_t>
-void seq_structMatrix<idx_t, data_t, oper_t>::Mult(
-    const seq_structVector<idx_t, oper_t> & x, seq_structVector<idx_t, oper_t> & y,
-    const seq_structVector<idx_t, oper_t> * sqrtD_ptr) const
+template<typename idx_t, typename data_t, typename calc_t>
+void seq_structMatrix<idx_t, data_t, calc_t>::Mult(
+    const seq_structVector<idx_t, calc_t> & x, seq_structVector<idx_t, calc_t> & y,
+    const seq_structVector<idx_t, calc_t> * sqrtD_ptr) const
 {
     CHECK_LOCAL_HALO(*this, x);
     CHECK_LOCAL_HALO(x , y);
@@ -491,8 +440,8 @@ void seq_structMatrix<idx_t, data_t, oper_t>::Mult(
     void (*kernel)(const idx_t, const idx_t, const idx_t, const data_t*, const data_t*, data_t*, const data_t*)
         = (sqrtD_ptr) ? spmv_scaled : spmv;
 
-    const oper_t * x_data = x.data;
-    oper_t * y_data = y.data;
+    const calc_t * x_data = x.data;
+    calc_t * y_data = y.data;
 
     idx_t   ibeg = halo_x, iend = ibeg + local_x,
             jbeg = halo_y, jend = jbeg + local_y,
@@ -506,14 +455,14 @@ void seq_structMatrix<idx_t, data_t, oper_t>::Mult(
         const data_t * A_jik = mat_data + j * slice_dki_size + i * slice_dk_size + kbeg * num_diag;
         const idx_t vec_off = j * vec_ki_size + i * vec_k_size + kbeg;
         const data_t * aux_jik = (sqrtD_ptr) ? (aux_data + vec_off) : nullptr;
-        const oper_t * x_jik = x_data + vec_off;
-        oper_t * y_jik = y_data + vec_off;
+        const calc_t * x_jik = x_data + vec_off;
+        calc_t * y_jik = y_data + vec_off;
         kernel(col_height, vec_k_size, vec_ki_size, A_jik, x_jik, y_jik, aux_jik);
     }
 }
 
-template<typename idx_t, typename data_t, typename oper_t>
-void seq_structMatrix<idx_t, data_t, oper_t>::operator=(data_t val) 
+template<typename idx_t, typename data_t, typename calc_t>
+void seq_structMatrix<idx_t, data_t, calc_t>::operator=(data_t val) 
 {
     for (idx_t j = 0; j < halo_y * 2 + local_y; j++) 
     for (idx_t i = 0; i < halo_x * 2 + local_x; i++)
@@ -524,8 +473,8 @@ void seq_structMatrix<idx_t, data_t, oper_t>::operator=(data_t val)
     }
 }
 
-template<typename idx_t, typename data_t, typename oper_t>
-void seq_structMatrix<idx_t, data_t, oper_t>::set_diag_val(idx_t d, data_t val) 
+template<typename idx_t, typename data_t, typename calc_t>
+void seq_structMatrix<idx_t, data_t, calc_t>::set_diag_val(idx_t d, data_t val) 
 {
     const idx_t jbeg = halo_y, jend = jbeg + local_y,
                 ibeg = halo_x, iend = ibeg + local_x,

@@ -23,6 +23,9 @@ template<typename idx_t, typename data_t>
 void Interpolator<idx_t, data_t>::setup_weights() {
     switch (type)
     {
+    case Plg_linear_4cell:
+        a0 = 1.0;
+        break;
     case Plg_linear_8cell:
         //    a0----a0
         //    /|     /|
@@ -159,6 +162,15 @@ void Interpolator<idx_t, data_t>::apply(const par_structVector<idx_t, data_t> & 
         }
     }
     else if (type == Plg_linear_8cell) {
+#ifdef PROFILE
+        double t, mint, maxt;
+        int test_cnt = 10;
+        int my_pid; MPI_Comm_rank(par_fine_vec.comm_pkg->cart_comm, &my_pid);
+        int num_procs; MPI_Comm_size(par_fine_vec.comm_pkg->cart_comm, &num_procs);
+        MPI_Barrier(par_fine_vec.comm_pkg->cart_comm);
+        t = wall_time();
+        for (int te = 0; te < test_cnt; te++) {
+#endif
         #pragma omp parallel for collapse(3) schedule(static)
         for (idx_t cj = cjbeg; cj < cjend; cj++)
         for (idx_t ci = cibeg; ci < ciend; ci++)
@@ -176,6 +188,57 @@ void Interpolator<idx_t, data_t>::apply(const par_structVector<idx_t, data_t> & 
             f_data[F_VECIDX(fk+1, fi  , fj+1)] = coar_val;
             f_data[F_VECIDX(fk  , fi+1, fj+1)] = coar_val;
             f_data[F_VECIDX(fk+1, fi+1, fj+1)] = coar_val; 
+        }
+
+        // // 这两种写法没差别，但对64cell的插值可能会有差别
+        // #pragma omp parallel for collapse(3) schedule(static)
+        // for (idx_t cj = cjbeg; cj < cjend; cj++)
+        // for (idx_t ci = cibeg; ci < ciend; ci++)
+        // for (idx_t ck = ckbeg; ck < ckend; ck++) {
+        //     const idx_t fj = hy + by + (cj - cjbeg) * sy;// fj - fjbeg == (cj - cjbeg) * sy + by，而其中fjbeg就等于hy
+        //     const idx_t fi = hx + bx + (ci - cibeg) * sx;
+        //     const idx_t fk = hz + bz + (ck - ckbeg) * sz;
+        //     data_t coar_val = c_data[C_VECIDX(ck  , ci  , cj  )];
+        //     idx_t d00 = F_VECIDX(fk, fi, fj), d10 = F_VECIDX(fk, fi+1, fj), d01 = F_VECIDX(fk, fi, fj+1), d11 = F_VECIDX(fk, fi+1, fj+1);
+        //     f_data[d00  ] = coar_val;
+        //     f_data[d00+1] = coar_val;
+        //     f_data[d10  ] = coar_val;
+        //     f_data[d10+1] = coar_val;
+        //     // ------------------------------------------------------------ //
+        //     f_data[d01  ] = coar_val;
+        //     f_data[d01+1] = coar_val;
+        //     f_data[d11  ] = coar_val;
+        //     f_data[d11+1] = coar_val; 
+        // }
+#ifdef PROFILE
+        }
+        t = wall_time() - t; t /= test_cnt;
+        MPI_Allreduce(&t, &mint, 1, MPI_DOUBLE, MPI_MIN, par_fine_vec.comm_pkg->cart_comm);
+        MPI_Allreduce(&t, &maxt, 1, MPI_DOUBLE, MPI_MAX, par_fine_vec.comm_pkg->cart_comm);
+        if (my_pid == 0) {
+            double bytes = (f_vec.local_x) * (f_vec.local_y) * (f_vec.local_z) * sizeof(data_t);// 细网格向量
+            bytes       += (c_vec.local_x) * (c_vec.local_y) * (c_vec.local_z) * sizeof(data_t);// 粗网格向量
+            bytes = bytes * num_procs / (1024*1024*1024);// total GB
+            printf("Prlg data %ld total %.2f GB time %.5f/%.5f s BW %.2f/%.2f GB/s\n",
+                     sizeof(data_t), bytes, mint, maxt, bytes/maxt, bytes/mint);
+        }
+#endif
+    }
+    else if (type == Plg_linear_4cell) {
+        assert(f_k_size == c_k_size);
+        #pragma omp parallel for collapse(3) schedule(static)
+        for (idx_t cj = cjbeg; cj < cjend; cj++)
+        for (idx_t ci = cibeg; ci < ciend; ci++)
+        for (idx_t ck = ckbeg; ck < ckend; ck++) {
+            const idx_t fj = hy + by + (cj - cjbeg) * sy;// fj - fjbeg == (cj - cjbeg) * sy + by，而其中fjbeg就等于hy
+            const idx_t fi = hx + bx + (ci - cibeg) * sx;
+            const idx_t fk = ck;// same
+            data_t coar_val = c_data[C_VECIDX(ck  , ci  , cj  )];
+            f_data[F_VECIDX(fk  , fi  , fj  )] = coar_val;
+            f_data[F_VECIDX(fk  , fi+1, fj  )] = coar_val;
+            // ------------------------------------------------------------ //
+            f_data[F_VECIDX(fk  , fi  , fj+1)] = coar_val;
+            f_data[F_VECIDX(fk  , fi+1, fj+1)] = coar_val;
         }
     }
     else {

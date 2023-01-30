@@ -39,8 +39,8 @@ void dense_LU_decomp(const data_t * a, data_t * l, data_t * u, const idx_t num_r
     }
 }
 
-template<typename idx_t, typename data_t>
-void dense_forward(const data_t * l, const data_t * rhs, data_t * x, const idx_t num_rows, const idx_t num_cols)
+template<typename idx_t, typename data_t, typename calc_t>
+void dense_forward(const data_t * l, const calc_t * rhs, calc_t * x, const idx_t num_rows, const idx_t num_cols)
 {
     assert(num_rows == num_cols);
     const idx_t N = num_rows;
@@ -53,8 +53,8 @@ void dense_forward(const data_t * l, const data_t * rhs, data_t * x, const idx_t
     }
 }
 
-template<typename idx_t, typename data_t>
-void dense_backward(const data_t * u, const data_t * rhs, data_t * x, const idx_t num_rows, const idx_t num_cols)
+template<typename idx_t, typename data_t, typename calc_t>
+void dense_backward(const data_t * u, const calc_t * rhs, calc_t * x, const idx_t num_rows, const idx_t num_cols)
 {
     assert(num_rows == num_cols);
     const idx_t N = num_rows;

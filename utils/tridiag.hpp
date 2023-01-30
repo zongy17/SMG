@@ -22,9 +22,8 @@ protected:
 public:
     bool periodic = false;
     TridiagSolver(bool is_periodic = false) : periodic(is_periodic) { }
-    virtual void alloc(idx_t n_size);
     // 执行分解过程
-    virtual void Setup();
+    virtual void Setup(const idx_t n_size, oper_t * a_buf, oper_t * b_buf, oper_t * c_buf);
     void truncate() {
 #ifdef __aarch64__
         for (idx_t i = 0; i < n_size; i++) {
@@ -65,30 +64,27 @@ TridiagSolver<idx_t, data_t, oper_t>::~TridiagSolver() {
 }
 
 template<typename idx_t, typename data_t, typename oper_t>
-void TridiagSolver<idx_t, data_t, oper_t>::alloc(idx_t n_size) {
-    this->n_size = n_size;
-    assert(a == nullptr && b == nullptr && c == nullptr);// 避免realloc
-
-    // a = new data_t [n_size];
-    // b = new data_t [n_size];
-    // c = new data_t [n_size];
-
-    a = new data_t [n_size * 3];
-    b = a + n_size;
-    c = b + n_size;;
-}
-
-template<typename idx_t, typename data_t, typename oper_t>
-void TridiagSolver<idx_t, data_t, oper_t>::Setup()
+void TridiagSolver<idx_t, data_t, oper_t>::Setup(const idx_t len, oper_t * a_buf, oper_t * b_buf, oper_t * c_buf)
 {
-    // assert(a[   0    ] == 0.0);
-    // assert(c[n_size - 1] == 0.0);
-
+    n_size = len;
+    assert(a_buf[   0      ] == 0.0);
+    assert(c_buf[n_size - 1] == 0.0);
     // 系数分解
-    c[0] /= b[0];
+    c_buf[0] /= b_buf[0];
     for (idx_t i = 1; i < n_size; i++) {
-        b[i] = b[i] - a[i] * c[i - 1];
-        c[i] = c[i] / b[i];
+        b_buf[i] = b_buf[i] - a_buf[i] * c_buf[i - 1];
+        c_buf[i] = c_buf[i] / b_buf[i];
+    }
+
+    assert(a == nullptr && b == nullptr && c == nullptr);// 避免realloc
+    a = new data_t [n_size * 3];
+    b = a +  n_size;
+    c = a + (n_size << 1);
+    // 拷贝
+    for (idx_t i = 0; i < n_size; i++) {
+        a[i] = a_buf[i];
+        b[i] = b_buf[i];
+        c[i] = c_buf[i];
     }
 }
 
@@ -105,7 +101,7 @@ void TridiagSolver<idx_t, data_t, oper_t>::Solve(oper_t * rhs, oper_t * sol) {
         sol[i] = rhs[i] - c[i] * sol[i + 1];
 }
 
-/*
+
 #define NEON_LEN 4
 
 template<typename idx_t, typename data_t, typename oper_t>
@@ -118,15 +114,16 @@ void TridiagSolver<idx_t, data_t, oper_t>::Solve_neon_prft(oper_t * __restrict__
     sol[n_size] = 0.0;
 
     // 前代
-    register idx_t k = 0, max_k = ((n_size)&(~(NEON_LEN-1)));
+    idx_t k = 0, max_k = ((n_size)&(~(NEON_LEN-1)));
     const data_t * a_ptr = a, * b_ptr = b;
 
     // 为前代的后半部分准备预取
     __builtin_prefetch(a_ptr + 32, 0, 0);
     __builtin_prefetch(b_ptr + 32, 0, 0);
-    __builtin_prefetch(rhs + 32, 1);
+    __builtin_prefetch(rhs + 16, 1); __builtin_prefetch(rhs + 32, 1); __builtin_prefetch(rhs + 48, 1);
+    __builtin_prefetch(rhs + 64, 1);
     // 为回代的前半部分准备预取
-    __builtin_prefetch(sol + 32, 1);
+    __builtin_prefetch(sol + 64, 1); __builtin_prefetch(sol + 48, 1);
     __builtin_prefetch(c + 32, 0, 0);
     
     // 等价变换 rhs[i] = rhs[i]/b[i] - a[i]/b[i] * rhs[i-1]
@@ -159,7 +156,7 @@ void TridiagSolver<idx_t, data_t, oper_t>::Solve_neon_prft(oper_t * __restrict__
     
     // 为前代的后半部分准备预取
     __builtin_prefetch(c_ptr - 32, 0, 0);
-    __builtin_prefetch(sol - 32, 1);
+    __builtin_prefetch(sol - 64, 1); __builtin_prefetch(sol - 48, 1);
     __builtin_prefetch(rhs - 32, 0, 0);
 
     for (k = max_k; k > 0; ) {
@@ -187,7 +184,6 @@ void TridiagSolver<idx_t, data_t, oper_t>::Solve_neon_prft(oper_t * __restrict__
 }
 
 #undef NEON_LEN
-*/
 
 template<typename idx_t, typename data_t>
 void tridiag_thomas(data_t * a, data_t * b, data_t * c, data_t * d, data_t * sol, idx_t n_size)

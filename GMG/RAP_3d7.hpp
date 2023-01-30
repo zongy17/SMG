@@ -367,6 +367,211 @@ void RAP_3d7(
 #undef SHIFT
 }
 
+template<typename idx_t, typename data_t>
+void RAP_3d7_semiXY(
+    // 细网格的数据，以及各维度的存储大小（含halo区）
+    const data_t * fine_mat, const idx_t fx, const idx_t fy, const idx_t fz, 
+    // 粗网格的数据，以及各维度的存储大小（含halo区）
+        data_t * coar_mat, const idx_t cx, const idx_t cy, const idx_t cz,
+    // 本进程在粗网格上实际负责的范围：[cibeg, ciend) x [cjbeg, cjend) x [ckbeg, ckend)
+    const idx_t cibeg, const idx_t ciend, const idx_t cjbeg, const idx_t cjend, const idx_t ckbeg, const idx_t ckend,
+    // ilb, iub 分别记录本进程在i维度是否在左边界和右边界
+    const bool ilb , const bool iub , 
+    // jlb, jub 分别记录本进程在j维度是否在前边界和后边界
+    const bool jlb , const bool jub , 
+    // klb, kub 分别记录本进程在k维度是否在下边界和上边界
+    const bool klb , const bool kub ,
+    // 实际就是halo区的宽度，要求粗、细网格的宽度相同
+    const idx_t base_x, const idx_t base_y, const idx_t base_z) 
+{
+    assert(base_x == 1 && base_y == 1 && base_z == 1);
+    for (idx_t i = 0; i < NUM_DIAG * cx * cy * cz; i++) {
+        // 初值赋为0，为了边界条件
+        coar_mat[i] = 0.0;
+    }
+
+    const data_t (*AF)[NUM_DIAG] = (data_t (*)[NUM_DIAG])fine_mat;
+    data_t (*AC)[NUM_DIAG] = (data_t (*)[NUM_DIAG])coar_mat;
+
+    const idx_t czcx = cz * cx;// cz * cx
+    const idx_t fzfx = fz * fx;// fz * fx
+#define C_IDX(i, j, k)   (k) + (i) * cz + (j) * czcx
+#define F_IDX(i, j, k)   (k) + (i) * fz + (j) * fzfx
+#define SHIFT(oi, oj, ok) 3 + (ok) + (oi) * 2 + (oj) * 3 
+// 当本进程不在某维度的边界时，可以直接算（前提要求细网格的halo区已填充，但R采用4点时似乎也不用？）
+#define CHECK_BDR(CI, CJ, CK) \
+    (ilb==false || (CI) >= cibeg) && (iub==false || (CI) < ciend) && \
+    (jlb==false || (CJ) >= cjbeg) && (jub==false || (CJ) < cjend) && \
+    (klb==false || (CK) >= ckbeg) && (kub==false || (CK) < ckend)
+
+	#pragma omp parallel for collapse(3) schedule(static)
+    for (idx_t J = cjbeg; J < cjend; J++)
+    for (idx_t I = cibeg; I < ciend; I++)
+    for (idx_t K = ckbeg; K < ckend; K++) {
+		if (CHECK_BDR(I,J - 1,K)) {// ingb=0
+			data_t res = 0.0;
+			{// u_coord=(2*I - 1,2*J - 1,K)
+				data_t tmp = 0.0;
+				const data_t * ptr = AF[F_IDX(2*I - 1,2*J - 1,K)];
+				tmp += 1.0000000 * ptr[0];
+				res += tmp * 0.2500000;
+			}
+			{// u_coord=(2*I,2*J - 1,K)
+				data_t tmp = 0.0;
+				const data_t * ptr = AF[F_IDX(2*I,2*J - 1,K)];
+				tmp += 1.0000000 * ptr[0];
+				res += tmp * 0.2500000;
+			}
+			AC[C_IDX(I,J,K)][0] = res;
+		}
+		if (CHECK_BDR(I - 1,J,K)) {// ingb=1
+			data_t res = 0.0;
+			{// u_coord=(2*I - 1,2*J - 1,K)
+				data_t tmp = 0.0;
+				const data_t * ptr = AF[F_IDX(2*I - 1,2*J - 1,K)];
+				tmp += 1.0000000 * ptr[1];
+				res += tmp * 0.2500000;
+			}
+			{// u_coord=(2*I - 1,2*J,K)
+				data_t tmp = 0.0;
+				const data_t * ptr = AF[F_IDX(2*I - 1,2*J,K)];
+				tmp += 1.0000000 * ptr[1];
+				res += tmp * 0.2500000;
+			}
+			AC[C_IDX(I,J,K)][1] = res;
+		}
+		if (CHECK_BDR(I,J,K - 1)) {// ingb=2
+			data_t res = 0.0;
+			{// u_coord=(2*I - 1,2*J - 1,K)
+				data_t tmp = 0.0;
+				const data_t * ptr = AF[F_IDX(2*I - 1,2*J - 1,K)];
+				tmp += 1.0000000 * ptr[2];
+				res += tmp * 0.2500000;
+			}
+			{// u_coord=(2*I,2*J - 1,K)
+				data_t tmp = 0.0;
+				const data_t * ptr = AF[F_IDX(2*I,2*J - 1,K)];
+				tmp += 1.0000000 * ptr[2];
+				res += tmp * 0.2500000;
+			}
+			{// u_coord=(2*I - 1,2*J,K)
+				data_t tmp = 0.0;
+				const data_t * ptr = AF[F_IDX(2*I - 1,2*J,K)];
+				tmp += 1.0000000 * ptr[2];
+				res += tmp * 0.2500000;
+			}
+			{// u_coord=(2*I,2*J,K)
+				data_t tmp = 0.0;
+				const data_t * ptr = AF[F_IDX(2*I,2*J,K)];
+				tmp += 1.0000000 * ptr[2];
+				res += tmp * 0.2500000;
+			}
+			AC[C_IDX(I,J,K)][2] = res;
+		}
+		if (CHECK_BDR(I,J,K)) {// ingb=3
+			data_t res = 0.0;
+			{// u_coord=(2*I - 1,2*J - 1,K)
+				data_t tmp = 0.0;
+				const data_t * ptr = AF[F_IDX(2*I - 1,2*J - 1,K)];
+				tmp += 1.0000000 * ptr[3];
+				tmp += 1.0000000 * ptr[6];
+				tmp += 1.0000000 * ptr[5];
+				res += tmp * 0.2500000;
+			}
+			{// u_coord=(2*I,2*J - 1,K)
+				data_t tmp = 0.0;
+				const data_t * ptr = AF[F_IDX(2*I,2*J - 1,K)];
+				tmp += 1.0000000 * ptr[1];
+				tmp += 1.0000000 * ptr[3];
+				tmp += 1.0000000 * ptr[6];
+				res += tmp * 0.2500000;
+			}
+			{// u_coord=(2*I - 1,2*J,K)
+				data_t tmp = 0.0;
+				const data_t * ptr = AF[F_IDX(2*I - 1,2*J,K)];
+				tmp += 1.0000000 * ptr[0];
+				tmp += 1.0000000 * ptr[3];
+				tmp += 1.0000000 * ptr[5];
+				res += tmp * 0.2500000;
+			}
+			{// u_coord=(2*I,2*J,K)
+				data_t tmp = 0.0;
+				const data_t * ptr = AF[F_IDX(2*I,2*J,K)];
+				tmp += 1.0000000 * ptr[1];
+				tmp += 1.0000000 * ptr[0];
+				tmp += 1.0000000 * ptr[3];
+				res += tmp * 0.2500000;
+			}
+			AC[C_IDX(I,J,K)][3] = res;
+		}
+		if (CHECK_BDR(I,J,K + 1)) {// ingb=4
+			data_t res = 0.0;
+			{// u_coord=(2*I - 1,2*J - 1,K)
+				data_t tmp = 0.0;
+				const data_t * ptr = AF[F_IDX(2*I - 1,2*J - 1,K)];
+				tmp += 1.0000000 * ptr[4];
+				res += tmp * 0.2500000;
+			}
+			{// u_coord=(2*I,2*J - 1,K)
+				data_t tmp = 0.0;
+				const data_t * ptr = AF[F_IDX(2*I,2*J - 1,K)];
+				tmp += 1.0000000 * ptr[4];
+				res += tmp * 0.2500000;
+			}
+			{// u_coord=(2*I - 1,2*J,K)
+				data_t tmp = 0.0;
+				const data_t * ptr = AF[F_IDX(2*I - 1,2*J,K)];
+				tmp += 1.0000000 * ptr[4];
+				res += tmp * 0.2500000;
+			}
+			{// u_coord=(2*I,2*J,K)
+				data_t tmp = 0.0;
+				const data_t * ptr = AF[F_IDX(2*I,2*J,K)];
+				tmp += 1.0000000 * ptr[4];
+				res += tmp * 0.2500000;
+			}
+			AC[C_IDX(I,J,K)][4] = res;
+		}
+		if (CHECK_BDR(I + 1,J,K)) {// ingb=5
+			data_t res = 0.0;
+			{// u_coord=(2*I,2*J - 1,K)
+				data_t tmp = 0.0;
+				const data_t * ptr = AF[F_IDX(2*I,2*J - 1,K)];
+				tmp += 1.0000000 * ptr[5];
+				res += tmp * 0.2500000;
+			}
+			{// u_coord=(2*I,2*J,K)
+				data_t tmp = 0.0;
+				const data_t * ptr = AF[F_IDX(2*I,2*J,K)];
+				tmp += 1.0000000 * ptr[5];
+				res += tmp * 0.2500000;
+			}
+			AC[C_IDX(I,J,K)][5] = res;
+		}
+		if (CHECK_BDR(I,J + 1,K)) {// ingb=6
+			data_t res = 0.0;
+			{// u_coord=(2*I - 1,2*J,K)
+				data_t tmp = 0.0;
+				const data_t * ptr = AF[F_IDX(2*I - 1,2*J,K)];
+				tmp += 1.0000000 * ptr[6];
+				res += tmp * 0.2500000;
+			}
+			{// u_coord=(2*I,2*J,K)
+				data_t tmp = 0.0;
+				const data_t * ptr = AF[F_IDX(2*I,2*J,K)];
+				tmp += 1.0000000 * ptr[6];
+				res += tmp * 0.2500000;
+			}
+			AC[C_IDX(I,J,K)][6] = res;
+		}
+	}
+
+#undef C_IDX
+#undef F_IDX
+#undef SHIFT
+}
+
+
 #undef NUM_DIAG
 
 #endif

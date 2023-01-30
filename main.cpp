@@ -1,9 +1,6 @@
 #include "utils/par_struct_mat.hpp"
 #include "Solver_ls.hpp"
-#include "copy_with_trunc.hpp"
-
-#include <unordered_map>
-std::unordered_map<std::string, RELAX_TYPE> trans_smth;
+#include "adapator/Adaptor_64_for_32.hpp"
 
 int main(int argc, char ** argv)
 {
@@ -26,10 +23,6 @@ int main(int argc, char ** argv)
     std::string its_name = std::string(argv[cnt++]);
     int restart    = atoi(argv[cnt++]);
 
-    std::string prc_name = "";
-    if (argc >= 8)
-        prc_name = std::string(argv[cnt++]);
-
     if (my_pid == 0) printf("\033[1;35mNum Proc along X: %d, along Y: %d, along Z: %d\033[0m \n", num_proc_x, num_proc_y, num_proc_z);
     if (my_pid == 0) printf("Max threads: %d\n", omp_get_max_threads());
 
@@ -42,17 +35,22 @@ int main(int argc, char ** argv)
             assert(sizeof(KSP_TYPE) == 4);
             assert(num_proc_z == 1);
             num_diag = 19;
-        } else if (strcmp(case_name.c_str(), "DEMO") == 0) {
-            assert(sizeof(KSP_TYPE) == 8);
-            num_diag = 19;
+        } else if (strstr(case_name.c_str(), "DEMO")) {
+            if      (strstr(case_name.c_str(), "07"))
+                num_diag = 7;
+            else if (strstr(case_name.c_str(), "19"))
+                num_diag = 19;
+            else if (strstr(case_name.c_str(), "27"))
+                num_diag = 27;
+            else MPI_Abort(MPI_COMM_WORLD, -71927);
+            if (my_pid == 0) printf("DEMO program of %d\n", num_diag);
         }
         assert(num_diag != -1);
         par_structVector<IDX_TYPE, KSP_TYPE> * x = nullptr, * b = nullptr, * y = nullptr;
         par_structMatrix<IDX_TYPE, KSP_TYPE, KSP_TYPE> * A = nullptr;
         std::string pathname;
         IterativeSolver<IDX_TYPE, KSP_TYPE, PC_TYPE> * solver = nullptr;
-        Solver<IDX_TYPE, PC_TYPE, KSP_TYPE, KSP_TYPE> * precond = nullptr;
-        IDX_TYPE num_discrete = 0, num_Galerkin = 0;
+        Solver<IDX_TYPE, PC_TYPE, KSP_TYPE> * precond = nullptr;
         std::string data_path = "/storage/hpcauser/zongyi/HUAWEI/SMG/data";
 
         x = new par_structVector<IDX_TYPE, KSP_TYPE          >
@@ -71,28 +69,49 @@ int main(int argc, char ** argv)
         y->set_val(0.0, true);
         A->set_val(0.0, true);
 
-        if (strcmp(case_name.c_str(), "DEMO") == 0) {
+        if (strstr(case_name.c_str(), "DEMO")) {
             if (A->num_diag == 7) {
-                A->set_diag_val(0, -1.6);
-                A->set_diag_val(1, -2.1);
-                A->set_diag_val(2, -3.9);
-                A->set_diag_val(3, 15.0);
-                A->set_diag_val(4, -3.3);
-                A->set_diag_val(5, -2.7);
-                A->set_diag_val(6, -1.2);
+                // srand(time(0));
+                // rand
+                A->set_diag_val(0, -1.0);
+                A->set_diag_val(1, -1.0);
+                A->set_diag_val(2, -1.0);
+                A->set_diag_val(3,  6.0);
+                A->set_diag_val(4, -1.0);
+                A->set_diag_val(5, -1.0);
+                A->set_diag_val(6, -1.0);
+                // A->set_diag_val(0, -1.0);
+                // A->set_diag_val(1, -2.0);
+                // A->set_diag_val(2, -4.0);
+                // A->set_diag_val(3, 14.0);
+                // A->set_diag_val(4, -4.0);
+                // A->set_diag_val(5, -2.0);
+                // A->set_diag_val(6, -1.0);
             }
             else if (A->num_diag == 19) {
-                                        A->set_diag_val(0, -1.0);
-                A->set_diag_val(1, -1.0); A->set_diag_val(2, -1.0); A->set_diag_val(3, -1.0);
-                                        A->set_diag_val(4, -1.0);
+                //                             A->set_diag_val(0, -1.0);
+                // A->set_diag_val(1, -1.0);   A->set_diag_val(2, -1.0); A->set_diag_val(3, -1.0);
+                //                             A->set_diag_val(4, -1.0);
                 
-                A->set_diag_val(5, -1.0); A->set_diag_val(6, -1.0); A->set_diag_val(7, -1.0);
-                A->set_diag_val(8, -1.0); A->set_diag_val(9, 22.0); A->set_diag_val(10,-1.0);
-                A->set_diag_val(11,-1.0); A->set_diag_val(12,-1.0); A->set_diag_val(13,-1.0);
+                // A->set_diag_val(5, -1.0); A->set_diag_val(6, -1.0); A->set_diag_val(7, -1.0);
+                // A->set_diag_val(8, -1.0); A->set_diag_val(9, 18.0); A->set_diag_val(10,-1.0);
+                // A->set_diag_val(11,-1.0); A->set_diag_val(12,-1.0); A->set_diag_val(13,-1.0);
                 
-                                        A->set_diag_val(14,-1.0);
-                A->set_diag_val(15,-1.0); A->set_diag_val(16,-1.0); A->set_diag_val(17,-1.0);
-                                        A->set_diag_val(18,-1.0);
+                //                             A->set_diag_val(14,-1.0);
+                // A->set_diag_val(15,-1.0);   A->set_diag_val(16,-1.0); A->set_diag_val(17,-1.0);
+                //                             A->set_diag_val(18,-1.0);
+
+                                            A->set_diag_val(0, -0.5);
+                A->set_diag_val(1, -0.25);  A->set_diag_val(2, -1.0); A->set_diag_val(3, -0.5);
+                                            A->set_diag_val(4, -4.0);
+                
+                A->set_diag_val(5, -1.0); A->set_diag_val(6, -2.0); A->set_diag_val(7, -2.0);
+                A->set_diag_val(8,-10.0); A->set_diag_val(9, 36.0); A->set_diag_val(10,-10.0);
+                A->set_diag_val(11,-4.0); A->set_diag_val(12,-0.5); A->set_diag_val(13,-0.125);
+                
+                                            A->set_diag_val(0, -0.5);
+                A->set_diag_val(1, -0.25);  A->set_diag_val(2, -2.0); A->set_diag_val(3, -0.125);
+                                            A->set_diag_val(4, -1.0);
             }
             else if (A->num_diag == 27) {
                 A->set_diag_val(0, -1.0); A->set_diag_val(1, -1.0); A->set_diag_val(2, -1.0);
@@ -110,6 +129,23 @@ int main(int argc, char ** argv)
             A->set_boundary();
             A->update_halo();
             b->set_val(1.0, false);// 右端项为全1向量
+            // {
+            //     const int   jbeg = b->local_vector->halo_y, jend = b->local_vector->local_y,
+            //                 ibeg = b->local_vector->halo_x, iend = b->local_vector->local_x,
+            //                 kbeg = b->local_vector->halo_z, kend = b->local_vector->local_z;
+            //     #pragma omp parallel for collapse(3) schedule(static)
+            //     for (int j = jbeg; j < jend; j++)
+            //     for (int i = ibeg; i < iend; i++)
+            //     for (int k = kbeg; k < kend; k++) {
+            //         int linear = ((j - jbeg) * b->local_vector->local_x + i - ibeg)
+            //             * b->local_vector->local_z + k - kbeg;
+            //         b->local_vector->data[j * b->local_vector->slice_ki_size
+            //             + i * b->local_vector->slice_k_size + k] = (linear % 100) / 10.0;
+            //     }
+            // }
+            // x->set_val(1.0, false);
+            // A->Mult(*x, *b, false);
+            // vec_scale(1.001, *b);
         } else {
             b->read_data(pathname, "array_b");
             // if (strcmp(case_name.c_str(), "GRAPES" ) == 0) x->read_data(pathname, "array_x");
@@ -127,9 +163,26 @@ int main(int argc, char ** argv)
         fine_dot = vec_dot<IDX_TYPE, KSP_TYPE, double>(*y, *y);
         if (my_pid == 0) printf(" (Ab, Ab) = %.27e\n", fine_dot);
 
+#ifdef PROFILE
+        {
+            par_structMatrix<IDX_TYPE, PC_TYPE, KSP_TYPE> A_low
+                (MPI_COMM_WORLD, num_diag, case_idx, case_idy, case_idz, num_proc_x, num_proc_y, num_proc_z);
+            int tot_len = A->num_diag 
+                    * (A->local_matrix->local_x + A->local_matrix->halo_x * 2)
+                    * (A->local_matrix->local_y + A->local_matrix->halo_y * 2)
+                    * (A->local_matrix->local_z + A->local_matrix->halo_z * 2);
+            for (int i = 0; i < tot_len; i++)
+                A_low.local_matrix->data[i] = A->local_matrix->data[i];
+            assert(A_low.check_Dirichlet());
+            A_low.separate_Diags();
+            A_low.Mult(*b, *y, false);
+            fine_dot = vec_dot<IDX_TYPE, KSP_TYPE, double>(*y, *y);
+            if (my_pid == 0) printf(" (Ab, Ab) = %.27e\n", fine_dot);
+        }
+#endif
         // MPI_Barrier(MPI_COMM_WORLD);
         // MPI_Abort(MPI_COMM_WORLD, -20221106);
-// #endif
+
 
 #ifdef WRITE_AOS
         A->write_struct_AOS_bin(pathname, "mat.AOS.bin");
@@ -139,42 +192,48 @@ int main(int argc, char ** argv)
         b->write_CSR_bin(pathname, "b.bin");
         x->write_CSR_bin(pathname, "x0.bin");
 #endif
-        trans_smth["PGS"]= PGS;
-        trans_smth["LGS"]= LGS;
-        trans_smth["BILU3d7"] = BILU3d7;
-        trans_smth["BILU3d15"] = BILU3d15;
-        trans_smth["BILU3d19"] = BILU3d19;
-        trans_smth["BILU3d27"] = BILU3d27;
-        trans_smth["PILU"] = PILU;
-        trans_smth["LU"] = GaussElim;
-
-        if (prc_name == "PGS") {
-            if (my_pid == 0) printf("  using \033[1;35mpointwise-GS\033[0m as preconditioner\n");
-            precond = new PointGS<IDX_TYPE, PC_TYPE, KSP_TYPE, KSP_TYPE>(SYMMETRIC);
-        } else if (prc_name == "LGS") {
-            if (my_pid == 0) printf("  using \033[1;35mlinewise-GS\033[0m as preconditioner\n");
-            precond = new LineGS<IDX_TYPE, PC_TYPE, KSP_TYPE, KSP_TYPE>(SYMMETRIC, VERT, *(x->comm_pkg));
-            // precond->SetOperator(*A);// 会截断再做三对角分解，但先走一遍流程 把该生成的都生成了
-            // if (sizeof(KSP_TYPE) != sizeof(PC_TYPE)) {
-            //     LineGS<IDX_TYPE, KSP_TYPE, KSP_TYPE, KSP_TYPE> prec_high(SYMMETRIC, VERT, *(x->comm_pkg));
-            //     prec_high.SetOperator(*A);
-            //     copy_w_trunc_LineSolver(prec_high, *((LineSolver<IDX_TYPE, PC_TYPE, KSP_TYPE, KSP_TYPE>*)precond) );
-            // }
+        
+#if KSP_BIT==64 && PC_BIT==32
+        precond = new Adaptor_64_for_32(argv + cnt, argc - cnt, true);
+#else
+        static_assert(  (KSP_BIT==64 && PC_BIT==64) || 
+                        (KSP_BIT==32              ) );
+        std::string prc_name = "";
+        if (argc >= 8)
+            prc_name = std::string(argv[cnt++]);
+        if (strstr(prc_name.c_str(), "PGS")) {
+            SCAN_TYPE type = SYMMETRIC;
+            if      (strstr(prc_name.c_str(), "F")) type = FORWARD;
+            else if (strstr(prc_name.c_str(), "B")) type = BACKWARD;
+            else if (strstr(prc_name.c_str(), "S")) type = SYMMETRIC;
+            if (my_pid == 0) printf("  using \033[1;35mpointwise-GS %d\033[0m as preconditioner\n", type);
+            precond = new PointGS<IDX_TYPE, PC_TYPE, KSP_TYPE>(type);
+        } else if (strstr(prc_name.c_str(), "LGS")) {
+            SCAN_TYPE type = SYMMETRIC;
+            if      (strstr(prc_name.c_str(), "F")) type = FORWARD;
+            else if (strstr(prc_name.c_str(), "B")) type = BACKWARD;
+            else if (strstr(prc_name.c_str(), "S")) type = SYMMETRIC;
+            if (my_pid == 0) printf("  using \033[1;35mlinewise-GS %d\033[0m as preconditioner\n", type);
+            precond = new LineGS<IDX_TYPE, PC_TYPE, KSP_TYPE>(type, VERT, x->comm_pkg);
         } else if (prc_name == "GMG") {
-            num_discrete = atoi(argv[cnt++]);
-            num_Galerkin = atoi(argv[cnt++]);
-            std::vector<std::string> mat_repo = {  };
-            std::vector<std::string>::iterator first, second;
-            first = mat_repo.begin();
-            assert(first + num_discrete <= mat_repo.end());
-            second = first + num_discrete;
+            IDX_TYPE num_discrete = atoi(argv[cnt++]);
+            IDX_TYPE num_Galerkin = atoi(argv[cnt++]);
+            std::unordered_map<std::string, RELAX_TYPE> trans_smth;
+            trans_smth["PGS"]= PGS;
+            trans_smth["LGS"]= LGS;
+            trans_smth["BILU3d7"] = BILU3d7;
+            trans_smth["BILU3d15"] = BILU3d15;
+            trans_smth["BILU3d19"] = BILU3d19;
+            trans_smth["BILU3d27"] = BILU3d27;
+            trans_smth["PILU"] = PILU;
+            trans_smth["LU"] = GaussElim;
             std::vector<RELAX_TYPE> rel_types;
             for (IDX_TYPE i = 0; i < num_discrete + num_Galerkin + 1; i++) {
                 rel_types.push_back(trans_smth[argv[cnt++]]);
                 // if (my_pid == 0) printf("i %d type %d\n", i, rel_types[i]);
             }
-            precond = new GeometricMultiGrid<IDX_TYPE, PC_TYPE, KSP_TYPE, KSP_TYPE>
-                (num_discrete, num_Galerkin, {first, second}, rel_types);
+            precond = new GeometricMultiGrid<IDX_TYPE, PC_TYPE, KSP_TYPE>
+                (num_discrete, num_Galerkin, {}, rel_types);
         } else if (strstr(prc_name.c_str(), "BILU")) {
             BlockILU_type type_3d = ILU_3D27;
             if     (strstr(prc_name.c_str(), "3d7" )) type_3d = ILU_3D7 ;
@@ -186,25 +245,14 @@ int main(int argc, char ** argv)
                 MPI_Abort(MPI_COMM_WORLD, -20230121);
             }
             if (my_pid == 0) printf("  using \033[1;35mblock-ILU type %d\033[0m as preconditioner\n", type_3d);
-            precond = new BlockILU<IDX_TYPE, PC_TYPE, KSP_TYPE, KSP_TYPE>(type_3d);
-            precond->SetOperator(*A);
-            // if (sizeof(KSP_TYPE) != sizeof(PC_TYPE)) {
-            //     BlockILU<IDX_TYPE, KSP_TYPE, KSP_TYPE, KSP_TYPE> prec_high(ILU_3D7);
-            //     prec_high.SetOperator(*A);
-            //     copy_w_trunc_BILU(prec_high, *((BlockILU<IDX_TYPE, PC_TYPE, KSP_TYPE, KSP_TYPE>*)precond) );   
-            // }
+            precond = new BlockILU<IDX_TYPE, PC_TYPE, KSP_TYPE>(type_3d);
         } else if (prc_name == "PILU") {
             if (my_pid == 0) printf("  using \033[1;35mplane-ILU\033[0m as preconditioner\n");
-            precond = new PlaneILU<IDX_TYPE, PC_TYPE, KSP_TYPE, KSP_TYPE>(ILU_2D9);
-            precond->SetOperator(*A);// 会截断再做ILU分解，但先走一遍流程 把该生成的都生成了
-            if (sizeof(KSP_TYPE) != sizeof(PC_TYPE)) {
-                PlaneILU<IDX_TYPE, KSP_TYPE, KSP_TYPE, KSP_TYPE> prec_high(ILU_2D9);
-                prec_high.SetOperator(*A);
-                copy_w_trunc_PILU(prec_high, *((PlaneILU<IDX_TYPE, PC_TYPE, KSP_TYPE, KSP_TYPE>*)precond) );
-            }
+            precond = new PlaneILU<IDX_TYPE, PC_TYPE, KSP_TYPE>(ILU_2D9);
         } else {
             if (my_pid == 0) printf("NO preconditioner was set.\n");
         }
+#endif
         
 
         if (its_name == "GCR") {
@@ -220,16 +268,15 @@ int main(int argc, char ** argv)
             MPI_Abort(MPI_COMM_WORLD, -1);
         }
 
-        solver->SetMaxIter(1000);
+        solver->SetMaxIter(200);
         if (strcmp(case_name.c_str(), "GRAPES" ) == 0) {// 使用绝对残差
-            if (its_name == "GCR") solver->SetAbsTol(1e-10);// 注意：这一版的GCR里用的是点积结果（不开根）判敛，实际是范数的平方
-            else solver->SetAbsTol(1e-5);
+            if (its_name == "GCR") solver->SetAbsTol(1e-12);// 注意：这一版的GCR里用的是点积结果（不开根）判敛，实际是范数的平方
+            else solver->SetAbsTol(1e-6);
         } else {// 其它算例使用相对残差
             if (its_name == "GCR") solver->SetRelTol(1e-18);
             else solver->SetRelTol(1e-9);
         }
         if (precond != nullptr) solver->SetPreconditioner(*precond);
-        if (my_pid == 0) printf("Next to Set Operator A for IterativeSolver\n");
         solver->SetOperator(*A);
         
 #ifdef DEBUG
@@ -463,12 +510,12 @@ int main(int argc, char ** argv)
         }
 #endif
 
-        if (case_name == "LASER" && prc_name == "GMG") {
-            assert(num_Galerkin >= 0);
-            KSP_TYPE  wgts[num_Galerkin+1];
-            for (int i = 0; i < num_Galerkin+1; i++) wgts[i] = 1.2;
-            ((GeometricMultiGrid<IDX_TYPE, PC_TYPE, KSP_TYPE, KSP_TYPE>*)precond)->SetRelaxWeights(wgts, num_Galerkin+1);
-        }
+        // if (case_name == "LASER" && prc_name == "GMG") {
+        //     assert(num_Galerkin >= 0);
+        //     PC_TYPE  wgts[num_Galerkin+1];
+        //     for (int i = 0; i < num_Galerkin+1; i++) wgts[i] = 1.2;
+        //     ((GeometricMultiGrid<IDX_TYPE, PC_TYPE, KSP_TYPE>*)precond)->SetRelaxWeights(wgts, num_Galerkin+1);
+        // }
 
         double t1 = wall_time();
         solver->Mult(*b, *x, false);

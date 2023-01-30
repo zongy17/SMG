@@ -127,10 +127,10 @@ void par_structVector<idx_t, data_t>::setup_comm_pkg(bool need_corner)
     MPI_Datatype (&recv_subarray)[NUM_NEIGHBORS] = comm_pkg->recv_subarray;
     MPI_Datatype & mpi_scalar_type               = comm_pkg->mpi_scalar_type;
     // 建立通信结构：注意data的排布从内到外依次为k(2)->i(1)->j(0)，按照C-order
-    if     (sizeof(data_t) == 16)   mpi_scalar_type = MPI_LONG_DOUBLE;
-    else if (sizeof(data_t) == 8)   mpi_scalar_type = MPI_DOUBLE;
-    else if (sizeof(data_t) == 4)   mpi_scalar_type = MPI_FLOAT;
-    else if (sizeof(data_t) == 2)   mpi_scalar_type = MPI_SHORT;
+    if      constexpr (sizeof(data_t) == 16)  mpi_scalar_type = MPI_LONG_DOUBLE;
+    else if constexpr (sizeof(data_t) == 8)   mpi_scalar_type = MPI_DOUBLE;
+    else if constexpr (sizeof(data_t) == 4)   mpi_scalar_type = MPI_FLOAT;
+    else if constexpr (sizeof(data_t) == 2)   mpi_scalar_type = MPI_SHORT;
     else { printf("INVALID data_t when creating subarray, sizeof %ld bytes\n", sizeof(data_t)); MPI_Abort(MPI_COMM_WORLD, -2001); }
     
     idx_t size[3] = {   local_vector->local_y + 2 * local_vector->halo_y,

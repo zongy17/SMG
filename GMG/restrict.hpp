@@ -22,6 +22,9 @@ template<typename idx_t, typename data_t>
 void Restrictor<idx_t, data_t>::setup_weights() {
     switch (type)
     {
+    case Rst_4cell:
+        a0 = 0.25;
+        break;
     case Rst_8cell:
         //    a00----a00
         //    /|     /|
@@ -103,6 +106,15 @@ void Restrictor<idx_t, data_t>::apply(const par_structVector<idx_t, data_t> & pa
         if (bx < 0 || by < 0 || bz < 0)// 此时需要引用到不在自己进程负责范围内的数据
             par_fine_vec.update_halo();
 
+#ifdef PROFILE
+        double t, mint, maxt;
+        int test_cnt = 10;
+        int my_pid; MPI_Comm_rank(par_fine_vec.comm_pkg->cart_comm, &my_pid);
+        int num_procs; MPI_Comm_size(par_fine_vec.comm_pkg->cart_comm, &num_procs);
+        MPI_Barrier(par_fine_vec.comm_pkg->cart_comm);
+        t = wall_time();
+        for (int te = 0; te < test_cnt; te++) {
+#endif
         #pragma omp parallel for collapse(3) schedule(static)
         for (idx_t cj = cjbeg; cj < cjend; cj++)
         for (idx_t ci = cibeg; ci < ciend; ci++)
@@ -119,6 +131,39 @@ void Restrictor<idx_t, data_t>::apply(const par_structVector<idx_t, data_t> & pa
             +   f_data[F_VECIDX(fk+1, fi  , fj+1)]
             +   f_data[F_VECIDX(fk  , fi+1, fj+1)]
             +   f_data[F_VECIDX(fk+1, fi+1, fj+1)]
+            );
+        }
+#ifdef PROFILE
+        }
+        t = wall_time() - t; t /= test_cnt;
+        MPI_Allreduce(&t, &mint, 1, MPI_DOUBLE, MPI_MIN, par_fine_vec.comm_pkg->cart_comm);
+        MPI_Allreduce(&t, &maxt, 1, MPI_DOUBLE, MPI_MAX, par_fine_vec.comm_pkg->cart_comm);
+        if (my_pid == 0) {
+            double bytes = (f_vec.local_x) * (f_vec.local_y) * (f_vec.local_z) * sizeof(data_t);// 细网格向量
+            bytes       += (c_vec.local_x) * (c_vec.local_y) * (c_vec.local_z) * sizeof(data_t);// 粗网格向量
+            bytes = bytes * num_procs / (1024*1024*1024);// total GB
+            printf("Rstr data %ld total %.2f GB time %.5f/%.5f s BW %.2f/%.2f GB/s\n",
+                     sizeof(data_t), bytes, mint, maxt, bytes/maxt, bytes/mint);
+        }
+#endif
+    }
+    else if (type == Rst_4cell) {
+        if (bx < 0 || by < 0)
+            par_fine_vec.update_halo();
+        
+        assert(c_k_size == f_k_size);
+        #pragma omp parallel for collapse(3) schedule(static)
+        for (idx_t cj = cjbeg; cj < cjend; cj++)
+        for (idx_t ci = cibeg; ci < ciend; ci++)
+        for (idx_t ck = ckbeg; ck < ckend; ck++) {// same as fk's range
+            const idx_t fj = hy + by + (cj - cjbeg) * sy;// fj - fjbeg == (cj - cjbeg) * sy + by，而其中fjbeg就等于hy
+            const idx_t fi = hx + bx + (ci - cibeg) * sx;
+            const idx_t fk = ck;
+            c_data[C_VECIDX(ck, ci, cj)] = a0 * (
+                f_data[F_VECIDX(fk  , fi  , fj  )]
+            +   f_data[F_VECIDX(fk  , fi+1, fj  )]
+            +   f_data[F_VECIDX(fk  , fi  , fj+1)]
+            +   f_data[F_VECIDX(fk  , fi+1, fj+1)]
             );
         }
     }
