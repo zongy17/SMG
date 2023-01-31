@@ -270,8 +270,8 @@ int main(int argc, char ** argv)
 
         solver->SetMaxIter(200);
         if (strcmp(case_name.c_str(), "GRAPES" ) == 0) {// 使用绝对残差
-            if (its_name == "GCR") solver->SetAbsTol(1e-12);// 注意：这一版的GCR里用的是点积结果（不开根）判敛，实际是范数的平方
-            else solver->SetAbsTol(1e-6);
+            if (its_name == "GCR") solver->SetAbsTol(1e-10);// 注意：这一版的GCR里用的是点积结果（不开根）判敛，实际是范数的平方
+            else solver->SetAbsTol(1e-5);
         } else {// 其它算例使用相对残差
             if (its_name == "GCR") solver->SetRelTol(1e-18);
             else solver->SetRelTol(1e-9);

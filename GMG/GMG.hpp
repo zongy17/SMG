@@ -313,16 +313,8 @@ void GeometricMultiGrid<idx_t, data_t, calc_t>::Setup(const par_structMatrix<idx
                 gz = A_array_high[i]->local_matrix->local_z * num_procs[2];
                 A_array_low[i] = new par_structMatrix<idx_t, data_t, calc_t>(comm, A_array_high[i]->num_diag, gx, gy, gz, num_procs[1], num_procs[0], num_procs[2]);
                 const   seq_structMatrix<idx_t, calc_t, calc_t> & src_h = *(A_array_high[i]->local_matrix);
-                        seq_structMatrix<idx_t, data_t, calc_t> & dst_l = *(A_array_low [i]->local_matrix);
-                CHECK_LOCAL_HALO(src_h, dst_l);
-                idx_t tot_len = (src_h.local_x + src_h.halo_x * 2) * (src_h.local_y + src_h.halo_y * 2)
-                            *   (src_h.local_z + src_h.halo_z * 2) *  src_h.num_diag;
-                #pragma omp parallel for schedule(static)
-                for (idx_t p = 0; p < tot_len; p++)
-                    dst_l.data[p] = (data_t) src_h.data[p];     
-
                 // 当SpMV需要转换精度时，换成SOA来
-                A_array_low[i]->separate_Diags();
+                A_array_low[i]->separate_truncate_Diags(src_h);
             // }
         }
     }
