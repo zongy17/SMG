@@ -1,6 +1,6 @@
 #include "utils/par_struct_mat.hpp"
 #include "Solver_ls.hpp"
-#include "adapator/Adaptor_64_for_32.hpp"
+// #include "adapator/Adaptor_64_for_32.hpp"
 
 int main(int argc, char ** argv)
 {
@@ -49,6 +49,7 @@ int main(int argc, char ** argv)
         par_structVector<IDX_TYPE, KSP_TYPE> * x = nullptr, * b = nullptr, * y = nullptr;
         par_structMatrix<IDX_TYPE, KSP_TYPE, KSP_TYPE> * A = nullptr;
         std::string pathname;
+        IDX_TYPE num_discrete = 0, num_Galerkin = 0;
         IterativeSolver<IDX_TYPE, KSP_TYPE, PC_TYPE> * solver = nullptr;
         Solver<IDX_TYPE, PC_TYPE, KSP_TYPE> * precond = nullptr;
         std::string data_path = "/storage/hpcauser/zongyi/HUAWEI/SMG/data";
@@ -165,6 +166,7 @@ int main(int argc, char ** argv)
 
 #ifdef PROFILE
         {
+            A->scale(10.0);
             par_structMatrix<IDX_TYPE, PC_TYPE, KSP_TYPE> A_low
                 (MPI_COMM_WORLD, num_diag, case_idx, case_idy, case_idz, num_proc_x, num_proc_y, num_proc_z);
             int tot_len = A->num_diag 
@@ -175,6 +177,9 @@ int main(int argc, char ** argv)
                 A_low.local_matrix->data[i] = A->local_matrix->data[i];
             assert(A_low.check_Dirichlet());
             A_low.separate_Diags();
+            A_low.sqrt_D = A->sqrt_D;
+            A_low.own_sqrt_D = false;
+            A_low.scaled = A->scaled;
             A_low.Mult(*b, *y, false);
             fine_dot = vec_dot<IDX_TYPE, KSP_TYPE, double>(*y, *y);
             if (my_pid == 0) printf(" (Ab, Ab) = %.27e\n", fine_dot);
@@ -193,11 +198,6 @@ int main(int argc, char ** argv)
         x->write_CSR_bin(pathname, "x0.bin");
 #endif
         
-#if KSP_BIT==64 && PC_BIT==32
-        precond = new Adaptor_64_for_32(argv + cnt, argc - cnt, true);
-#else
-        static_assert(  (KSP_BIT==64 && PC_BIT==64) || 
-                        (KSP_BIT==32              ) );
         std::string prc_name = "";
         if (argc >= 8)
             prc_name = std::string(argv[cnt++]);
@@ -208,16 +208,16 @@ int main(int argc, char ** argv)
             else if (strstr(prc_name.c_str(), "S")) type = SYMMETRIC;
             if (my_pid == 0) printf("  using \033[1;35mpointwise-GS %d\033[0m as preconditioner\n", type);
             precond = new PointGS<IDX_TYPE, PC_TYPE, KSP_TYPE>(type);
-        } else if (strstr(prc_name.c_str(), "LGS")) {
-            SCAN_TYPE type = SYMMETRIC;
-            if      (strstr(prc_name.c_str(), "F")) type = FORWARD;
-            else if (strstr(prc_name.c_str(), "B")) type = BACKWARD;
-            else if (strstr(prc_name.c_str(), "S")) type = SYMMETRIC;
-            if (my_pid == 0) printf("  using \033[1;35mlinewise-GS %d\033[0m as preconditioner\n", type);
-            precond = new LineGS<IDX_TYPE, PC_TYPE, KSP_TYPE>(type, VERT, x->comm_pkg);
+        // } else if (strstr(prc_name.c_str(), "LGS")) {
+        //     SCAN_TYPE type = SYMMETRIC;
+        //     if      (strstr(prc_name.c_str(), "F")) type = FORWARD;
+        //     else if (strstr(prc_name.c_str(), "B")) type = BACKWARD;
+        //     else if (strstr(prc_name.c_str(), "S")) type = SYMMETRIC;
+        //     if (my_pid == 0) printf("  using \033[1;35mlinewise-GS %d\033[0m as preconditioner\n", type);
+        //     precond = new LineGS<IDX_TYPE, PC_TYPE, KSP_TYPE>(type, VERT, x->comm_pkg);
         } else if (prc_name == "GMG") {
-            IDX_TYPE num_discrete = atoi(argv[cnt++]);
-            IDX_TYPE num_Galerkin = atoi(argv[cnt++]);
+            num_discrete = atoi(argv[cnt++]);
+            num_Galerkin = atoi(argv[cnt++]);
             std::unordered_map<std::string, RELAX_TYPE> trans_smth;
             trans_smth["PGS"]= PGS;
             trans_smth["LGS"]= LGS;
@@ -234,25 +234,24 @@ int main(int argc, char ** argv)
             }
             precond = new GeometricMultiGrid<IDX_TYPE, PC_TYPE, KSP_TYPE>
                 (num_discrete, num_Galerkin, {}, rel_types);
-        } else if (strstr(prc_name.c_str(), "BILU")) {
-            BlockILU_type type_3d = ILU_3D27;
-            if     (strstr(prc_name.c_str(), "3d7" )) type_3d = ILU_3D7 ;
-            else if(strstr(prc_name.c_str(), "3d15")) type_3d = ILU_3D15;
-            else if(strstr(prc_name.c_str(), "3d19")) type_3d = ILU_3D19;
-            else if(strstr(prc_name.c_str(), "3d27")) type_3d = ILU_3D27;
-            else {
-                if (my_pid == 0) printf("Error: unsupported types of Blockwise-ILU\n");
-                MPI_Abort(MPI_COMM_WORLD, -20230121);
-            }
-            if (my_pid == 0) printf("  using \033[1;35mblock-ILU type %d\033[0m as preconditioner\n", type_3d);
-            precond = new BlockILU<IDX_TYPE, PC_TYPE, KSP_TYPE>(type_3d);
-        } else if (prc_name == "PILU") {
-            if (my_pid == 0) printf("  using \033[1;35mplane-ILU\033[0m as preconditioner\n");
-            precond = new PlaneILU<IDX_TYPE, PC_TYPE, KSP_TYPE>(ILU_2D9);
+        // } else if (strstr(prc_name.c_str(), "BILU")) {
+        //     BlockILU_type type_3d = ILU_3D27;
+        //     if     (strstr(prc_name.c_str(), "3d7" )) type_3d = ILU_3D7 ;
+        //     else if(strstr(prc_name.c_str(), "3d15")) type_3d = ILU_3D15;
+        //     else if(strstr(prc_name.c_str(), "3d19")) type_3d = ILU_3D19;
+        //     else if(strstr(prc_name.c_str(), "3d27")) type_3d = ILU_3D27;
+        //     else {
+        //         if (my_pid == 0) printf("Error: unsupported types of Blockwise-ILU\n");
+        //         MPI_Abort(MPI_COMM_WORLD, -20230121);
+        //     }
+        //     if (my_pid == 0) printf("  using \033[1;35mblock-ILU type %d\033[0m as preconditioner\n", type_3d);
+        //     precond = new BlockILU<IDX_TYPE, PC_TYPE, KSP_TYPE>(type_3d);
+        // } else if (prc_name == "PILU") {
+        //     if (my_pid == 0) printf("  using \033[1;35mplane-ILU\033[0m as preconditioner\n");
+        //     precond = new PlaneILU<IDX_TYPE, PC_TYPE, KSP_TYPE>(ILU_2D9);
         } else {
             if (my_pid == 0) printf("NO preconditioner was set.\n");
         }
-#endif
         
 
         if (its_name == "GCR") {
@@ -268,6 +267,10 @@ int main(int argc, char ** argv)
             MPI_Abort(MPI_COMM_WORLD, -1);
         }
 
+        if constexpr (PC_BIT==16) {
+            if (prc_name == "GMG") ((GeometricMultiGrid<IDX_TYPE, PC_TYPE, KSP_TYPE>*)precond)->scale_before_setup_smoothers = true;
+            else A->scale(1.0);
+        }
         solver->SetMaxIter(200);
         if (strcmp(case_name.c_str(), "GRAPES" ) == 0) {// 使用绝对残差
             if (its_name == "GCR") solver->SetAbsTol(1e-12);// 注意：这一版的GCR里用的是点积结果（不开根）判敛，实际是范数的平方
@@ -510,12 +513,12 @@ int main(int argc, char ** argv)
         }
 #endif
 
-        // if (case_name == "LASER" && prc_name == "GMG") {
-        //     assert(num_Galerkin >= 0);
-        //     PC_TYPE  wgts[num_Galerkin+1];
-        //     for (int i = 0; i < num_Galerkin+1; i++) wgts[i] = 1.2;
-        //     ((GeometricMultiGrid<IDX_TYPE, PC_TYPE, KSP_TYPE>*)precond)->SetRelaxWeights(wgts, num_Galerkin+1);
-        // }
+        if (case_name == "LASER" && prc_name == "GMG") {
+            assert(num_Galerkin >= 0);
+            PC_TYPE  wgts[num_Galerkin+1];
+            for (int i = 0; i < num_Galerkin+1; i++) wgts[i] = 1.2;
+            ((GeometricMultiGrid<IDX_TYPE, PC_TYPE, KSP_TYPE>*)precond)->SetRelaxWeights(wgts, num_Galerkin+1);
+        }
 
         double t1 = wall_time();
         solver->Mult(*b, *x, false);

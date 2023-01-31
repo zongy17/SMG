@@ -435,9 +435,9 @@ void seq_structMatrix<idx_t, data_t, calc_t>::Mult(
 {
     CHECK_LOCAL_HALO(*this, x);
     CHECK_LOCAL_HALO(x , y);
-    const data_t* mat_data = data, 
-                * aux_data = (sqrtD_ptr) ? sqrtD_ptr->data : nullptr;
-    void (*kernel)(const idx_t, const idx_t, const idx_t, const data_t*, const data_t*, data_t*, const data_t*)
+    const data_t* mat_data = data;
+    const calc_t* aux_data = (sqrtD_ptr) ? sqrtD_ptr->data : nullptr;
+    void (*kernel)(const idx_t, const idx_t, const idx_t, const data_t*, const data_t*, data_t*, const calc_t*)
         = (sqrtD_ptr) ? spmv_scaled : spmv;
 
     const calc_t * x_data = x.data;
@@ -454,7 +454,7 @@ void seq_structMatrix<idx_t, data_t, calc_t>::Mult(
     for (idx_t i = ibeg; i < iend; i++) {
         const data_t * A_jik = mat_data + j * slice_dki_size + i * slice_dk_size + kbeg * num_diag;
         const idx_t vec_off = j * vec_ki_size + i * vec_k_size + kbeg;
-        const data_t * aux_jik = (sqrtD_ptr) ? (aux_data + vec_off) : nullptr;
+        const calc_t * aux_jik = (sqrtD_ptr) ? (aux_data + vec_off) : nullptr;
         const calc_t * x_jik = x_data + vec_off;
         calc_t * y_jik = y_data + vec_off;
         kernel(col_height, vec_k_size, vec_ki_size, A_jik, x_jik, y_jik, aux_jik);

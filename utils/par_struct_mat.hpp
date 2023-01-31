@@ -11,8 +11,8 @@ class par_structMatrix : public Operator<idx_t, data_t, calc_t>  {
 public:
     idx_t num_diag;
     idx_t offset_x     , offset_y     , offset_z     ;// 该矩阵在全局中的偏移
-    bool scaled = false;
-    seq_structVector<idx_t, data_t> * sqrt_D = nullptr;
+    bool scaled = false, own_sqrt_D = false;
+    seq_structVector<idx_t, calc_t> * sqrt_D = nullptr;
 
     seq_structMatrix<idx_t, data_t, calc_t> * local_matrix;
 
@@ -21,7 +21,8 @@ public:
     mutable idx_t DiagGroups_cnt = 0;
     mutable seq_structMatrix<idx_t, data_t, calc_t> ** DiagGroups = nullptr;
     // spmv的函数指针
-    void (* SOA_spmv)(const idx_t, const idx_t, const idx_t, const data_t **, const calc_t *, calc_t *) = nullptr;
+    void (* SOA_spmv)(const idx_t, const idx_t, const idx_t, const data_t**, const calc_t*, calc_t*, const calc_t*) = nullptr;
+    void (* SOA_spmv_scaled)(const idx_t, const idx_t, const idx_t, const data_t**, const calc_t*, calc_t*, const calc_t*) = nullptr;
     const idx_t * stencil = nullptr;
 
     // 通信相关的
@@ -40,14 +41,14 @@ public:
         int my_pid; MPI_Comm_rank(comm_pkg->cart_comm, &my_pid);
         if (my_pid == 0) printf("Warning: parMat truncated and sqrt_D to __fp16 (Consider to use f32 if effect bad!)\n");
         local_matrix->truncate();
-        if (sqrt_D != nullptr) {
+        if (sqrt_D != nullptr && own_sqrt_D) {
             const idx_t sqD_len = (sqrt_D->local_x + sqrt_D->halo_x * 2) * (sqrt_D->local_y + sqrt_D->halo_y * 2)
                                 * (sqrt_D->local_z + sqrt_D->halo_z * 2);
 #ifdef __aarch64__
             for (idx_t p = 0; p < sqD_len; p++) {
                 __fp16 tmp = (__fp16) sqrt_D->data[p];
                 // if (p == sqD_len / 3) printf("parMat::sqD truncate %.20e to", sqrt_D->data[p]);
-                sqrt_D->data[p] = (data_t) tmp;
+                sqrt_D->data[p] = (calc_t) tmp;
                 // if (p == sqD_len / 3) printf("%.20e\n", sqrt_D->data[p]);
             }
 #else
@@ -116,15 +117,21 @@ par_structMatrix<idx_t, data_t, calc_t>::par_structMatrix(MPI_Comm comm, idx_t n
     {
     case 7:
         stencil = stencil_offset_3d7;
-        if constexpr (sizeof(data_t) != sizeof(calc_t)) SOA_spmv = SOA_spmv_3d7_Cal32Stg16;
+        if constexpr (sizeof(data_t) != sizeof(calc_t)) {
+            if constexpr (sizeof(calc_t) == 4 && sizeof(data_t) == 2) {
+                SOA_spmv = SOA_spmv_3d7_Cal32Stg16;
+            } else if constexpr (sizeof(calc_t) == 8 && sizeof(data_t) == 2) {
+                SOA_spmv_scaled = SOA_spmv_3d7_Cal64Stg16_scaled;
+            }
+        }
         break;
     case 19:
         stencil = stencil_offset_3d19;
-        if constexpr (sizeof(data_t) != sizeof(calc_t)) SOA_spmv = SOA_spmv_3d19_Cal32Stg16;
+        // if constexpr (sizeof(data_t) != sizeof(calc_t)) SOA_spmv = SOA_spmv_3d19_Cal32Stg16;
         break;
     case 27:
         stencil = stencil_offset_3d27;
-        if constexpr (sizeof(data_t) != sizeof(calc_t)) SOA_spmv = SOA_spmv_3d27_Cal32Stg16;
+        // if constexpr (sizeof(data_t) != sizeof(calc_t)) SOA_spmv = SOA_spmv_3d27_Cal32Stg16;
         break;
     default:
         printf("not supported number of diagonals %d\n", num_diag);
@@ -144,6 +151,9 @@ par_structMatrix<idx_t, data_t, calc_t>::par_structMatrix(const par_structMatrix
     own_comm_pkg = false;
     SOA_spmv = model.SOA_spmv;
     stencil = model.stencil;
+    own_sqrt_D = false;
+    scaled = model.scaled;
+    sqrt_D = model.sqrt_D;
 }
 
 template<typename idx_t, typename data_t, typename calc_t>
@@ -162,7 +172,7 @@ par_structMatrix<idx_t, data_t, calc_t>::~par_structMatrix()
         }
         delete [] DiagGroups;
     }
-    if (scaled) {
+    if (scaled && own_sqrt_D) {
         assert(sqrt_D != nullptr);
         delete sqrt_D; sqrt_D = nullptr;
     }
@@ -331,8 +341,9 @@ void par_structMatrix<idx_t, data_t, calc_t>::Mult(const par_structVector<idx_t,
     int num_procs; MPI_Comm_size(MPI_COMM_WORLD, &num_procs);
     double bytes = local_matrix->local_x * local_matrix->local_y
                  * local_matrix->local_z * num_diag * sizeof(data_t);
+    int num_vec =  2 + int(scaled);
     bytes += (x.local_vector->local_x + x.local_vector->halo_x * 2) * (x.local_vector->local_y + x.local_vector->halo_y * 2)
-           * (x.local_vector->local_z + x.local_vector->halo_z * 2) * 2 * sizeof(calc_t);
+           * (x.local_vector->local_z + x.local_vector->halo_z * 2) * num_vec * sizeof(calc_t);
     bytes *= num_procs;
     bytes /= (1024 * 1024 * 1024);// GB
     MPI_Barrier(y.comm_pkg->cart_comm);
@@ -361,8 +372,8 @@ void par_structMatrix<idx_t, data_t, calc_t>::Mult(const par_structVector<idx_t,
     MPI_Allreduce(&t, &maxt, 1, MPI_DOUBLE, MPI_MAX, y.comm_pkg->cart_comm);
     MPI_Allreduce(&t, &mint, 1, MPI_DOUBLE, MPI_MIN, y.comm_pkg->cart_comm);
     // mint = maxt = t;
-    if (my_pid == 0) printf("SpMv data_t %ld calc_t %ld diag %d total %.2f GB time %.5f/%.5f s BW %.2f/%.2f GB/s\n",
-                sizeof(data_t), sizeof(calc_t), num_diag, bytes, mint, maxt, bytes/maxt, bytes/mint);
+    if (my_pid == 0) printf("SpMv data %ld calc %ld d%dv%d total %.2f GB time %.5f/%.5f s BW %.2f/%.2f GB/s\n",
+                sizeof(data_t), sizeof(calc_t), num_diag, num_vec, bytes, mint, maxt, bytes/maxt, bytes/mint);
 #endif
 }
 
@@ -372,9 +383,17 @@ void par_structMatrix<idx_t, data_t, calc_t>::SOA_Mult(const seq_structVector<id
     CHECK_LOCAL_HALO(*local_matrix, x);
     CHECK_LOCAL_HALO(x , y);
     assert(DiagGroups_separated);
-    assert(SOA_spmv);
+    void (*kernel)(const idx_t, const idx_t, const idx_t, const data_t**, const calc_t*, calc_t*, const calc_t*) = nullptr;
     const calc_t * x_data = x.data;
+    const calc_t * sqD_data = nullptr;
     calc_t * y_data = y.data;
+    if (scaled) {
+        kernel = SOA_spmv_scaled;
+        sqD_data = sqrt_D->data;
+    } else {
+        kernel = SOA_spmv;
+    }
+    assert(kernel);
 
     const idx_t ibeg = x.halo_x, iend = ibeg + x.local_x,
                 jbeg = x.halo_y, jend = jbeg + x.local_y,
@@ -390,13 +409,14 @@ void par_structMatrix<idx_t, data_t, calc_t>::SOA_Mult(const seq_structVector<id
         for (idx_t i = ibeg; i < iend; i++) {
             const idx_t vec_off = j * vec_ki_size + i * vec_k_size + kbeg;// 一定要有kbeg
             const calc_t * x_jik = x_data + vec_off;
+            const calc_t * sqD_jik = (sqD_data) ? (sqD_data + vec_off) : nullptr;
             calc_t * y_jik = y_data + vec_off;
             for (idx_t g = 0; g < DiagGroups_cnt; g++)
                 // A_jik[g] = DG_data[g] + j * slice_dki[g]
                 //     + i * slice_dk[g] + kbeg * nd[g];
                 A_jik[g] = DiagGroups[g]->data + j * DiagGroups[g]->slice_dki_size
                         + i * DiagGroups[g]->slice_dk_size + kbeg * DiagGroups[g]->num_diag;
-            SOA_spmv(col_height, vec_k_size, vec_ki_size, A_jik, x_jik, y_jik);
+            kernel(col_height, vec_k_size, vec_ki_size, A_jik, x_jik, y_jik, sqD_jik);
         }
     }
 }
@@ -811,7 +831,8 @@ template<typename idx_t, typename data_t, typename calc_t>
 void par_structMatrix<idx_t, data_t, calc_t>::scale(const data_t scaled_diag)
 {
     assert(scaled == false);
-    sqrt_D = new seq_structVector<idx_t, data_t>(
+    assert(sizeof(data_t) == sizeof(calc_t));
+    sqrt_D = new seq_structVector<idx_t, calc_t>(
         local_matrix->local_x, local_matrix->local_y, local_matrix->local_z,
         local_matrix->halo_x , local_matrix->halo_y , local_matrix->halo_z );
     sqrt_D->set_halo(0.0);
@@ -878,6 +899,7 @@ void par_structMatrix<idx_t, data_t, calc_t>::scale(const data_t scaled_diag)
 template<typename idx_t, typename data_t, typename calc_t>
 bool par_structMatrix<idx_t, data_t, calc_t>::check_scaling(const data_t scaled_diag)
 {
+    assert(sizeof(data_t) == sizeof(calc_t));
     const idx_t ibeg = local_matrix->halo_x, iend = ibeg + local_matrix->local_x,
                 jbeg = local_matrix->halo_y, jend = jbeg + local_matrix->local_y,
                 kbeg = local_matrix->halo_z, kend = kbeg + local_matrix->local_z;

@@ -296,8 +296,8 @@ void GeometricMultiGrid<idx_t, data_t, calc_t>::Setup(const par_structMatrix<idx
             if (relax_types[i] != GaussElim)
                 A_array_high[i]->scale(10.0);
             else
-                // A_array_high[i]->scale(0.1);
-                A_array_high[i]->scale(1.0);
+                A_array_high[i]->scale(0.1);
+                // A_array_high[i]->scale(1.0);
         }
     }
 
@@ -323,6 +323,9 @@ void GeometricMultiGrid<idx_t, data_t, calc_t>::Setup(const par_structMatrix<idx
 
                 // 当SpMV需要转换精度时，换成SOA来
                 A_array_low[i]->separate_Diags();
+                A_array_low[i]->sqrt_D = A_array_high[i]->sqrt_D;
+                A_array_low[i]->own_sqrt_D = false;
+                A_array_low[i]->scaled = A_array_high[i]->scaled;
             // }
         }
     }
@@ -336,39 +339,39 @@ void GeometricMultiGrid<idx_t, data_t, calc_t>::Setup(const par_structMatrix<idx
                 smoother[i]->SetOperator(*A_array_high[i]);
                 // delete A_array_high[i]; A_array_high[i] = nullptr;
             }
-            else if (relax_types[i] == LGS) {
-                if (my_pid == 0) printf("  using \033[1;35mlinewise-GS\033[0m as smoother of %d-th lev\n", i);
-                smoother[i] = new LineGS     <idx_t, data_t, calc_t>(SYMMETRIC, VERT, U_array[i]->comm_pkg);
-                smoother[i]->SetOperator(*A_array_high[i]);// 先走一遍流程，将生成的东西的空间分配出来
-                // delete A_array_high[i]; A_array_high[i] = nullptr;
-            }
-            else if (relax_types[i] == PILU) {
-                if (my_pid == 0) printf("  using \033[1;35mplanewise-ILU\033[0m as smoother of %d-th lev\n", i);
-                smoother[i] = new PlaneILU   <idx_t, data_t, calc_t>;
-                smoother[i]->SetOperator(*A_array_high[i]);// 先走一遍流程，将生成的东西的空间分配出来
-                // if (sizeof(data_t) != sizeof(oper_t)) {
-                //     PlaneILU<idx_t, oper_t, calc_t> prec_high;
-                //     prec_high.SetOperator(*A_array_high[i]);
-                //     copy_w_trunc_PILU(prec_high, *((PlaneILU<idx_t, data_t, oper_t, res_t>*)(smoother[i])));
-                // }
-                // delete A_array_low[i]; A_array_low[i] = nullptr;
-            }
-            else if (relax_types[i] == BILU3d7 || relax_types[i] == BILU3d15 ||
-                    relax_types[i] == BILU3d19 || relax_types[i] == BILU3d27) {
-                BlockILU_type type_3d = ILU_3D27;
-                if      (relax_types[i] == BILU3d7 ) type_3d = ILU_3D7;
-                else if (relax_types[i] == BILU3d15) type_3d = ILU_3D15;
-                else if (relax_types[i] == BILU3d19) type_3d = ILU_3D19;
-                else if (relax_types[i] == BILU3d27) type_3d = ILU_3D27;
-                if (my_pid == 0) printf("  using \033[1;35mblockwise-ILU type %d\033[0m as smoother of %d-th lev\n", type_3d, i);
-                smoother[i] = new BlockILU<idx_t, data_t, calc_t>(type_3d);
-                smoother[i]->SetOperator(*A_array_high[i]);
-                // if (sizeof(data_t) != sizeof(oper_t)) {
-                //     BlockILU<idx_t, oper_t, oper_t, res_t> prec_high(type_3d);
-                //     prec_high.SetOperator(*A_array_high[i]);
-                //     copy_w_trunc_BILU(prec_high, *((BlockILU<idx_t, data_t, oper_t, res_t>*)(smoother[i])));
-                // }
-            }
+            // else if (relax_types[i] == LGS) {
+            //     if (my_pid == 0) printf("  using \033[1;35mlinewise-GS\033[0m as smoother of %d-th lev\n", i);
+            //     smoother[i] = new LineGS     <idx_t, data_t, calc_t>(SYMMETRIC, VERT, U_array[i]->comm_pkg);
+            //     smoother[i]->SetOperator(*A_array_high[i]);// 先走一遍流程，将生成的东西的空间分配出来
+            //     // delete A_array_high[i]; A_array_high[i] = nullptr;
+            // }
+            // else if (relax_types[i] == PILU) {
+            //     if (my_pid == 0) printf("  using \033[1;35mplanewise-ILU\033[0m as smoother of %d-th lev\n", i);
+            //     smoother[i] = new PlaneILU   <idx_t, data_t, calc_t>;
+            //     smoother[i]->SetOperator(*A_array_high[i]);// 先走一遍流程，将生成的东西的空间分配出来
+            //     // if (sizeof(data_t) != sizeof(oper_t)) {
+            //     //     PlaneILU<idx_t, oper_t, calc_t> prec_high;
+            //     //     prec_high.SetOperator(*A_array_high[i]);
+            //     //     copy_w_trunc_PILU(prec_high, *((PlaneILU<idx_t, data_t, oper_t, res_t>*)(smoother[i])));
+            //     // }
+            //     // delete A_array_low[i]; A_array_low[i] = nullptr;
+            // }
+            // else if (relax_types[i] == BILU3d7 || relax_types[i] == BILU3d15 ||
+            //         relax_types[i] == BILU3d19 || relax_types[i] == BILU3d27) {
+            //     BlockILU_type type_3d = ILU_3D27;
+            //     if      (relax_types[i] == BILU3d7 ) type_3d = ILU_3D7;
+            //     else if (relax_types[i] == BILU3d15) type_3d = ILU_3D15;
+            //     else if (relax_types[i] == BILU3d19) type_3d = ILU_3D19;
+            //     else if (relax_types[i] == BILU3d27) type_3d = ILU_3D27;
+            //     if (my_pid == 0) printf("  using \033[1;35mblockwise-ILU type %d\033[0m as smoother of %d-th lev\n", type_3d, i);
+            //     smoother[i] = new BlockILU<idx_t, data_t, calc_t>(type_3d);
+            //     smoother[i]->SetOperator(*A_array_high[i]);
+            //     // if (sizeof(data_t) != sizeof(oper_t)) {
+            //     //     BlockILU<idx_t, oper_t, oper_t, res_t> prec_high(type_3d);
+            //     //     prec_high.SetOperator(*A_array_high[i]);
+            //     //     copy_w_trunc_BILU(prec_high, *((BlockILU<idx_t, data_t, oper_t, res_t>*)(smoother[i])));
+            //     // }
+            // }
             else if (relax_types[i] == GaussElim) {
                 DenseLU_type type;
                 if      (A_array_high[i]->num_diag ==  7) type = DenseLU_3D7;

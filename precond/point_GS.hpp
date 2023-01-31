@@ -82,36 +82,53 @@ public:
         this->output_dim[2] = op.output_dim[2];
 
         const idx_t num_diag = ((const par_structMatrix<idx_t, calc_t, calc_t>&)op).num_diag;
-        if constexpr (sizeof(calc_t) != sizeof(data_t) && sizeof(data_t) == 2 && sizeof(calc_t) == 4) {
-            // 单-半精度混合计算
-            assert(sizeof(data_t) < sizeof(calc_t));
+        if constexpr (sizeof(calc_t) != sizeof(data_t)) {
             separate_Diags();
-            switch (num_diag)
-            {
-            case 7:
-                SOA_forward_zero = SOA_point_forward_zero_3d7_Cal32Stg16;
-                SOA_forward_ALL  = SOA_point_forward_ALL_3d7_Cal32Stg16;
-                SOA_backward_zero= nullptr;// 没必要实现，实际不会用到
-                SOA_backward_ALL = SOA_point_backward_ALL_3d7_Cal32Stg16;
-                SOA_forward_zero_scaled = SOA_point_forward_zero_3d7_Cal32Stg16_scaled;
-                SOA_forward_ALL_scaled  = SOA_point_forward_ALL_3d7_Cal32Stg16_scaled;
-                SOA_backward_zero_scaled= nullptr;
-                SOA_backward_ALL_scaled = SOA_point_backward_ALL_3d7_Cal32Stg16_scaled;
-                break;
-            case 19:
-                SOA_forward_zero = SOA_point_forward_zero_3d19_Cal32Stg16;
-                SOA_forward_ALL  = SOA_point_forward_ALL_3d19_Cal32Stg16;
-                SOA_backward_zero= nullptr;
-                SOA_backward_ALL = SOA_point_backward_ALL_3d19_Cal32Stg16;
-                break;
-            case 27:
-                SOA_forward_zero = SOA_point_forward_zero_3d27_Cal32Stg16;
-                SOA_forward_ALL  = SOA_point_forward_ALL_3d27_Cal32Stg16;
-                SOA_backward_zero= nullptr;
-                SOA_backward_ALL = SOA_point_backward_ALL_3d27_Cal32Stg16;
-                break;
-            default:
-                MPI_Abort(MPI_COMM_WORLD, -10202);
+            if constexpr (sizeof(calc_t) == 4 && sizeof(data_t) == 2) {// 单-半精度混合计算
+                switch (num_diag)
+                {
+                case 7:
+                    SOA_forward_zero = SOA_point_forward_zero_3d7_Cal32Stg16;
+                    SOA_forward_ALL  = SOA_point_forward_ALL_3d7_Cal32Stg16;
+                    SOA_backward_zero= nullptr;// 没必要实现，实际不会用到
+                    SOA_backward_ALL = SOA_point_backward_ALL_3d7_Cal32Stg16;
+                    SOA_forward_zero_scaled = SOA_point_forward_zero_3d7_Cal32Stg16_scaled;
+                    SOA_forward_ALL_scaled  = SOA_point_forward_ALL_3d7_Cal32Stg16_scaled;
+                    SOA_backward_zero_scaled= nullptr;
+                    SOA_backward_ALL_scaled = SOA_point_backward_ALL_3d7_Cal32Stg16_scaled;
+                    break;
+                case 19:
+                    SOA_forward_zero = SOA_point_forward_zero_3d19_Cal32Stg16;
+                    SOA_forward_ALL  = SOA_point_forward_ALL_3d19_Cal32Stg16;
+                    SOA_backward_zero= nullptr;
+                    SOA_backward_ALL = SOA_point_backward_ALL_3d19_Cal32Stg16;
+                    break;
+                case 27:
+                    SOA_forward_zero = SOA_point_forward_zero_3d27_Cal32Stg16;
+                    SOA_forward_ALL  = SOA_point_forward_ALL_3d27_Cal32Stg16;
+                    SOA_backward_zero= nullptr;
+                    SOA_backward_ALL = SOA_point_backward_ALL_3d27_Cal32Stg16;
+                    break;
+                default:
+                    MPI_Abort(MPI_COMM_WORLD, -10202);
+                }
+            }
+            else if constexpr (sizeof(calc_t) == 8 && sizeof(data_t) == 2) {
+                switch (num_diag)
+                {
+                case 7:
+                    SOA_forward_zero = nullptr;
+                    SOA_forward_ALL  = nullptr;
+                    SOA_backward_zero= nullptr;// 没必要实现，实际不会用到
+                    SOA_backward_ALL = nullptr;
+                    SOA_forward_zero_scaled = SOA_point_forward_zero_3d7_Cal64Stg16_scaled;
+                    SOA_forward_ALL_scaled  = SOA_point_forward_ALL_3d7_Cal64Stg16_scaled;
+                    SOA_backward_zero_scaled= nullptr;
+                    SOA_backward_ALL_scaled = SOA_point_backward_ALL_3d7_Cal64Stg16_scaled;
+                    break;
+                default:
+                    MPI_Abort(MPI_COMM_WORLD, -10202);
+                }
             }
         }
         else {// 纯单一精度或者双-单混合
@@ -244,13 +261,14 @@ void PointGS<idx_t, data_t, calc_t>::Mult(const par_structVector<idx_t, calc_t> 
             if (my_pid == 0) {
                 const idx_t op_nd = ((const par_structMatrix<idx_t, calc_t, calc_t>*)oper)->num_diag;
                 int num_diag = this->zero_guess ? (op_nd / 2 + 1) : op_nd;
+                int num_vec = ((const par_structMatrix<idx_t, calc_t, calc_t>*)oper)->scaled ? 3 : 2;
                 bytes = (x.local_vector->local_x + x.local_vector->halo_x * 2) * (x.local_vector->local_y + x.local_vector->halo_y * 2)
-                      * (x.local_vector->local_z + x.local_vector->halo_z * 2) * sizeof(calc_t) * 2;// 向量的数据量
+                      * (x.local_vector->local_z + x.local_vector->halo_z * 2) * sizeof(calc_t) * num_vec;// 向量的数据量
                 bytes += x.local_vector->local_x * x.local_vector->local_y * x.local_vector->local_z * num_diag * sizeof(data_t);
                 bytes *= num_procs;
                 bytes /= (1024 * 1024 * 1024);// GB
-                printf("PGS-F data %ld calc %ld d%d total %.2f GB time %.5f/%.5f s BW %.2f/%.2f GB/s\n",
-                     sizeof(data_t), sizeof(calc_t), num_diag, bytes, mint, maxt, bytes/maxt, bytes/mint);
+                printf("PGS-F data %ld calc %ld d%dv%d total %.2f GB time %.5f/%.5f s BW %.2f/%.2f GB/s\n",
+                     sizeof(data_t), sizeof(calc_t), num_diag, num_vec, bytes, mint, maxt, bytes/maxt, bytes/mint);
             }
 #endif
             // 是否要注释掉这行决定后扫零初值的，取决于迭代次数是否会被显著影响
@@ -280,13 +298,14 @@ void PointGS<idx_t, data_t, calc_t>::Mult(const par_structVector<idx_t, calc_t> 
             if (my_pid == 0) {
                 const idx_t op_nd = ((const par_structMatrix<idx_t, calc_t, calc_t>*)oper)->num_diag;
                 int num_diag = this->zero_guess ? (op_nd / 2 + 1) : op_nd;
+                int num_vec = ((const par_structMatrix<idx_t, calc_t, calc_t>*)oper)->scaled ? 3 : 2;
                 bytes = (x.local_vector->local_x + x.local_vector->halo_x * 2) * (x.local_vector->local_y + x.local_vector->halo_y * 2)
-                      * (x.local_vector->local_z + x.local_vector->halo_z * 2) * sizeof(calc_t) * 2;// 向量的数据量
+                      * (x.local_vector->local_z + x.local_vector->halo_z * 2) * sizeof(calc_t) * num_vec;// 向量的数据量
                 bytes += x.local_vector->local_x * x.local_vector->local_y * x.local_vector->local_z * num_diag * sizeof(data_t);
                 bytes *= num_procs;
                 bytes /= (1024 * 1024 * 1024);// GB
-                printf("PGS-B data %ld calc %ld d%d total %.2f GB time %.5f/%.5f s BW %.2f/%.2f GB/s\n",
-                     sizeof(data_t), sizeof(calc_t), num_diag, bytes, mint, maxt, bytes/maxt, bytes/mint);
+                printf("PGS-B data %ld calc %ld d%dv%d total %.2f GB time %.5f/%.5f s BW %.2f/%.2f GB/s\n",
+                     sizeof(data_t), sizeof(calc_t), num_diag, num_vec, bytes, mint, maxt, bytes/maxt, bytes/mint);
             }
 #endif
             break;
@@ -693,7 +712,7 @@ void PointGS<idx_t, data_t, calc_t>::separate_Diags() {
 
     switch (seq_A.num_diag)
     {
-    case  7: DiagGroups_cnt = 2; break;// (0,1,2,3) (3,4,5,6)
+    case  7: DiagGroups_cnt = 2; break;// (0,1,2,3) (4,5,6)
     case 19: DiagGroups_cnt = 5; break;// (0,1,2,3) (4,5,6,7) (8,9,10) (11,12,13,14) (15,16,17,18)
     case 27: DiagGroups_cnt = 7; break;// (0,1,2,3) (4,5,6,7) (8,9,10,11) (12,13,14) (15,16,17,18) (19,20,21,22) (23,24,25,26)
     default: MPI_Abort(par_A.comm_pkg->cart_comm, -70891);
@@ -705,14 +724,14 @@ void PointGS<idx_t, data_t, calc_t>::separate_Diags() {
     const idx_t tot_elems = (lx + hx*2) * (ly + hy*2) * (lz + hz*2);
     if (seq_A.num_diag == 7) {
         DiagGroups[0] = new seq_structMatrix<idx_t, data_t, calc_t>(4, lx, ly, lz, hx, hy, hz);
-        DiagGroups[1] = new seq_structMatrix<idx_t, data_t, calc_t>(4, lx, ly, lz, hx, hy, hz);
+        DiagGroups[1] = new seq_structMatrix<idx_t, data_t, calc_t>(3, lx, ly, lz, hx, hy, hz);
         #pragma omp parallel for schedule(static)
         for (idx_t e = 0; e < tot_elems; e++) {
             const calc_t * aos_ptrs = seq_A.data + e * seq_A.num_diag;
             data_t * L_ptr = DiagGroups[0]->data + e * DiagGroups[0]->num_diag;
             data_t * U_ptr = DiagGroups[1]->data + e * DiagGroups[1]->num_diag;
             L_ptr[0] = aos_ptrs[0]; L_ptr[1] = aos_ptrs[1]; L_ptr[2] = aos_ptrs[2]; L_ptr[3] = aos_ptrs[3];
-            U_ptr[0] = aos_ptrs[3]; U_ptr[1] = aos_ptrs[4]; U_ptr[2] = aos_ptrs[5]; U_ptr[3] = aos_ptrs[6];
+            U_ptr[0] = aos_ptrs[4]; U_ptr[1] = aos_ptrs[5]; U_ptr[2] = aos_ptrs[6];
         }
     }
     else if (seq_A.num_diag == 19) {

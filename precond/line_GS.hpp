@@ -60,32 +60,34 @@ public:
     }
 	void post_setup() {
 		const idx_t num_diag = ((const par_structMatrix<idx_t, calc_t, calc_t>*)this->oper)->num_diag;
-		if constexpr (sizeof(calc_t) != sizeof(data_t) && sizeof(data_t) == 2) {
-			static_assert(sizeof(data_t) < sizeof(calc_t));
+		if constexpr (sizeof(calc_t) != sizeof(data_t)) {
 			separate_diags();
-			switch(num_diag)
-            {
-            case 7:
-                SOA_forward_zero    = SOA_line_forward_zero_3d7_Cal32Stg16;
-				SOA_forward_ALL		= SOA_line_forward_ALL_3d7_Cal32Stg16;
-                SOA_backward_zero   = nullptr;
-                SOA_backward_ALL	= SOA_line_backward_ALL_3d7_Cal32Stg16;
-                break;
-			case 19:
-				SOA_forward_zero	= SOA_line_forward_zero_3d19_Cal32Stg16;
-				SOA_forward_ALL		= SOA_line_forward_ALL_3d19_Cal32Stg16;
-				SOA_backward_zero   = nullptr;
-				SOA_backward_ALL	= SOA_line_backward_ALL_3d19_Cal32Stg16;
-				break;
-			case 27:
-				SOA_forward_zero	= SOA_line_forward_zero_3d27_Cal32Stg16;
-				SOA_forward_ALL		= SOA_line_forward_ALL_3d27_Cal32Stg16;
-				SOA_backward_zero   = nullptr;
-				SOA_backward_ALL	= SOA_line_backward_ALL_3d27_Cal32Stg16;
-				break;
-            default:
-                MPI_Abort(MPI_COMM_WORLD, -10304);
-            }
+			if constexpr (sizeof(calc_t) == 4 && sizeof(data_t) == 2) {
+				switch(num_diag)
+				{
+				case 7:
+					SOA_forward_zero    = SOA_line_forward_zero_3d7_Cal32Stg16;
+					SOA_forward_ALL		= SOA_line_forward_ALL_3d7_Cal32Stg16;
+					SOA_backward_zero   = nullptr;
+					SOA_backward_ALL	= SOA_line_backward_ALL_3d7_Cal32Stg16;
+					break;
+				case 19:
+					SOA_forward_zero	= SOA_line_forward_zero_3d19_Cal32Stg16;
+					SOA_forward_ALL		= SOA_line_forward_ALL_3d19_Cal32Stg16;
+					SOA_backward_zero   = nullptr;
+					SOA_backward_ALL	= SOA_line_backward_ALL_3d19_Cal32Stg16;
+					break;
+				case 27:
+					SOA_forward_zero	= SOA_line_forward_zero_3d27_Cal32Stg16;
+					SOA_forward_ALL		= SOA_line_forward_ALL_3d27_Cal32Stg16;
+					SOA_backward_zero   = nullptr;
+					SOA_backward_ALL	= SOA_line_backward_ALL_3d27_Cal32Stg16;
+					break;
+				default:
+					MPI_Abort(MPI_COMM_WORLD, -10304);
+            	}
+			}
+			else assert(false);
 		}
 		else {// 纯单一精度
 			separate_LU();

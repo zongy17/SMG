@@ -5,7 +5,7 @@
 #define KSP_BIT 64
 #endif
 #ifndef PC_BIT
-#define PC_BIT 32
+#define PC_BIT 16
 #endif
 
 #if KSP_BIT==80

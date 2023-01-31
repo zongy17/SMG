@@ -1220,27 +1220,29 @@ void struct_sptrsv_3d_forward_frame_hardCode(const data_t * l, const oper_t * b,
         idx_t cnt_groups[(lnz >> 1) + 1];// 类似于row_ptr的作用
         idx_t num_groups = 0;
         void (*kernel)(const idx_t, const idx_t, const data_t**, const oper_t*, oper_t*) = nullptr;
-        if (lnz == 3) {
-            assert(memcmp(pos, stencil_offset_3d7 ,  9*sizeof(idx_t)) == 0);
-            num_groups = 1;
-            cnt_groups[0] = 0; cnt_groups[1] = 3;
-            kernel = SOA_ilu_forward_zero_3d7_Cal32Stg16;
-        } else if (lnz == 7) {
-            assert(memcmp(pos, stencil_offset_3d15, 21*sizeof(idx_t)) == 0);
-            num_groups = 2;
-            cnt_groups[0] = 0; cnt_groups[1] = 3; cnt_groups[2] = 7;
-            kernel = SOA_ilu_forward_zero_3d15_Cal32Stg16;
-        } else if (lnz == 9) {
-            assert(memcmp(pos, stencil_offset_3d19, 27*sizeof(idx_t)) == 0);
-            num_groups = 3;
-            cnt_groups[0] = 0; cnt_groups[1] = 3; cnt_groups[2] = 6; cnt_groups[3] = 9;
-            kernel = SOA_ilu_forward_zero_3d19_Cal32Stg16;
-        } else if (lnz ==13) {
-            assert(memcmp(pos, stencil_offset_3d27, 39*sizeof(idx_t)) == 0);
-            num_groups = 4;
-            cnt_groups[0] = 0; cnt_groups[1] = 3; cnt_groups[2] = 6; cnt_groups[3] = 9; cnt_groups[4] = 13;
-            kernel = SOA_ilu_forward_zero_3d27_Cal32Stg16;
-        } else assert(false);
+        if constexpr (sizeof(data_t) == 2 && sizeof(oper_t) == 4) {
+            if (lnz == 3) {
+                assert(memcmp(pos, stencil_offset_3d7 ,  9*sizeof(idx_t)) == 0);
+                num_groups = 1;
+                cnt_groups[0] = 0; cnt_groups[1] = 3;
+                kernel = SOA_ilu_forward_zero_3d7_Cal32Stg16;
+            } else if (lnz == 7) {
+                assert(memcmp(pos, stencil_offset_3d15, 21*sizeof(idx_t)) == 0);
+                num_groups = 2;
+                cnt_groups[0] = 0; cnt_groups[1] = 3; cnt_groups[2] = 7;
+                kernel = SOA_ilu_forward_zero_3d15_Cal32Stg16;
+            } else if (lnz == 9) {
+                assert(memcmp(pos, stencil_offset_3d19, 27*sizeof(idx_t)) == 0);
+                num_groups = 3;
+                cnt_groups[0] = 0; cnt_groups[1] = 3; cnt_groups[2] = 6; cnt_groups[3] = 9;
+                kernel = SOA_ilu_forward_zero_3d19_Cal32Stg16;
+            } else if (lnz ==13) {
+                assert(memcmp(pos, stencil_offset_3d27, 39*sizeof(idx_t)) == 0);
+                num_groups = 4;
+                cnt_groups[0] = 0; cnt_groups[1] = 3; cnt_groups[2] = 6; cnt_groups[3] = 9; cnt_groups[4] = 13;
+                kernel = SOA_ilu_forward_zero_3d27_Cal32Stg16;
+            } else assert(false);
+        }
         assert(kernel);
         const idx_t tot_elems = dim_0 * dim_1 * dim_2;
         for (idx_t id = 0; id < num_groups; id++) {
@@ -1348,19 +1350,22 @@ void struct_sptrsv_3d_backward_frame_hardCode(const data_t * u, const oper_t * b
     if constexpr (sizeof(data_t) == sizeof(oper_t)) {
         // 执行一柱计算的函数
         void (*kernel)(const idx_t, const idx_t, const data_t*, const oper_t*, oper_t*) = nullptr;
-        if (rnz == 4) {
-            assert(memcmp(pos, stencil_offset_3d7  +  9, 12*sizeof(idx_t)) == 0);
-            kernel = AOS_ilu_backward_zero_3d7;
-        } else if (rnz == 8) {
-            assert(memcmp(pos, stencil_offset_3d15 + 21, 24*sizeof(idx_t)) == 0);
-            kernel = AOS_ilu_backward_zero_3d15;
-        } else if (rnz ==10) {
-            assert(memcmp(pos, stencil_offset_3d19 + 27, 30*sizeof(idx_t)) == 0);
-            kernel = AOS_ilu_backward_zero_3d19;
-        } else if (rnz ==14) {
-            assert(memcmp(pos, stencil_offset_3d27 + 39, 42*sizeof(idx_t)) == 0);
-            kernel = AOS_ilu_backward_zero_3d27;
-        } else assert(false);
+        if constexpr (sizeof(data_t) == 2 && sizeof(oper_t) == 4) {
+            if (rnz == 4) {
+                assert(memcmp(pos, stencil_offset_3d7  +  9, 12*sizeof(idx_t)) == 0);
+                kernel = AOS_ilu_backward_zero_3d7;
+            } else if (rnz == 8) {
+                assert(memcmp(pos, stencil_offset_3d15 + 21, 24*sizeof(idx_t)) == 0);
+                kernel = AOS_ilu_backward_zero_3d15;
+            } else if (rnz ==10) {
+                assert(memcmp(pos, stencil_offset_3d19 + 27, 30*sizeof(idx_t)) == 0);
+                kernel = AOS_ilu_backward_zero_3d19;
+            } else if (rnz ==14) {
+                assert(memcmp(pos, stencil_offset_3d27 + 39, 42*sizeof(idx_t)) == 0);
+                kernel = AOS_ilu_backward_zero_3d27;
+            } else assert(false);
+        }
+        assert(kernel);
 
         if (num_threads > 1) {
             // level是等值线 j + slope*i = Const, 对于3d7和3d15 斜率为1, 对于3d19和3d27 斜率为2
