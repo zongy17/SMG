@@ -51,7 +51,9 @@
 #include <string.h>
 #include <string>
 #include <vector>
+#include <tuple>
 #include <unordered_map>
+#include <algorithm>
 
 enum NEIGHBOR_ID {I_L, I_U, J_L, J_U, K_L, K_U, NUM_NEIGHBORS};
 typedef enum {VERT} LINE_DIRECTION;

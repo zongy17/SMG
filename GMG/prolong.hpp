@@ -5,11 +5,10 @@
 
 template<typename idx_t, typename data_t>
 class Interpolator {
-private:
+public:
     // 插值算子不需要根据方程是否为标准化形式而改变
     const PROLONG_TYPE type;
     data_t a0, a1, a2, a3;
-public:
     Interpolator(PROLONG_TYPE type): type(type) { 
         setup_weights();
     }
@@ -243,6 +242,15 @@ void Interpolator<idx_t, data_t>::apply(const par_structVector<idx_t, data_t> & 
     }
     else {
         assert(false);
+    }
+
+    // 非规则点部分
+    assert(par_fine_vec.num_irrgPts == par_coar_vec.num_irrgPts);
+    const idx_t fine_num_struct = par_fine_vec.global_size_x * par_fine_vec.global_size_y * par_fine_vec.global_size_z;
+    const idx_t coar_num_struct = par_coar_vec.global_size_x * par_coar_vec.global_size_y * par_coar_vec.global_size_z;
+    for (idx_t ir = 0; ir < par_coar_vec.num_irrgPts; ir++) {// 隐含要求gid按升序排列
+        assert(par_coar_vec.irrgPts[ir].gid - coar_num_struct == par_fine_vec.irrgPts[ir].gid - fine_num_struct);
+        par_fine_vec.irrgPts[ir].val = par_coar_vec.irrgPts[ir].val;
     }
 }
 

@@ -5,10 +5,9 @@
 
 template<typename idx_t, typename data_t>
 class Restrictor {
-protected:
+public:
     data_t a0, a1, a2, a3;
     const RESTRICT_TYPE type;
-public:
     Restrictor(RESTRICT_TYPE type): type(type)  { 
         setup_weights();
     }
@@ -229,6 +228,15 @@ void Restrictor<idx_t, data_t>::apply(const par_structVector<idx_t, data_t> & pa
     }
 #undef C_VECIDX
 #undef F_VECIDX
+
+    // 非规则点部分
+    assert(par_fine_vec.num_irrgPts == par_coar_vec.num_irrgPts);
+    const idx_t fine_num_struct = par_fine_vec.global_size_x * par_fine_vec.global_size_y * par_fine_vec.global_size_z;
+    const idx_t coar_num_struct = par_coar_vec.global_size_x * par_coar_vec.global_size_y * par_coar_vec.global_size_z;
+    for (idx_t ir = 0; ir < par_coar_vec.num_irrgPts; ir++) {// 隐含要求gid按升序排列
+        assert(par_coar_vec.irrgPts[ir].gid - coar_num_struct == par_fine_vec.irrgPts[ir].gid - fine_num_struct);
+        par_coar_vec.irrgPts[ir].val = par_fine_vec.irrgPts[ir].val;
+    }
 }
 
 #endif

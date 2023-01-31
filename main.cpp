@@ -27,23 +27,10 @@ int main(int argc, char ** argv)
     if (my_pid == 0) printf("Max threads: %d\n", omp_get_max_threads());
 
     {   IDX_TYPE num_diag = -1;
-        if (strcmp(case_name.c_str(), "LASER" ) == 0) {
+        if (strcmp(case_name.c_str(), "OIL" ) == 0) {
             assert(sizeof(KSP_TYPE) == 8);
+            assert(num_proc_y == 1);
             num_diag = 7;
-        }
-        else if (strcmp(case_name.c_str(), "GRAPES") == 0) {
-            assert(sizeof(KSP_TYPE) == 4);
-            assert(num_proc_z == 1);
-            num_diag = 19;
-        } else if (strstr(case_name.c_str(), "DEMO")) {
-            if      (strstr(case_name.c_str(), "07"))
-                num_diag = 7;
-            else if (strstr(case_name.c_str(), "19"))
-                num_diag = 19;
-            else if (strstr(case_name.c_str(), "27"))
-                num_diag = 27;
-            else MPI_Abort(MPI_COMM_WORLD, -71927);
-            if (my_pid == 0) printf("DEMO program of %d\n", num_diag);
         }
         assert(num_diag != -1);
         par_structVector<IDX_TYPE, KSP_TYPE> * x = nullptr, * b = nullptr, * y = nullptr;
@@ -53,104 +40,29 @@ int main(int argc, char ** argv)
         Solver<IDX_TYPE, PC_TYPE, KSP_TYPE> * precond = nullptr;
         std::string data_path = "/storage/hpcauser/zongyi/HUAWEI/SMG/data";
 
-        x = new par_structVector<IDX_TYPE, KSP_TYPE          >
+        b = new par_structVector<IDX_TYPE, KSP_TYPE          >
                 (MPI_COMM_WORLD,           case_idx, case_idy, case_idz, num_proc_x, num_proc_y, num_proc_z, num_diag!=7);
         A = new par_structMatrix<IDX_TYPE, KSP_TYPE, KSP_TYPE>
                 (MPI_COMM_WORLD, num_diag, case_idx, case_idy, case_idz, num_proc_x, num_proc_y, num_proc_z);
-        y = new par_structVector<IDX_TYPE, KSP_TYPE>(*x);
-        b = new par_structVector<IDX_TYPE, KSP_TYPE>(*x);
 
         pathname = data_path + "/" + case_name + 
             "/" + std::to_string(case_idx) + "x" + std::to_string(case_idy) + "x" + std::to_string(case_idz);
         if (my_pid == 0) printf("%s\n", pathname.c_str());
 
-        x->set_val(0.0, true);// 迪利克雷边界条件
-        b->set_val(0.0, true);
-        y->set_val(0.0, true);
         A->set_val(0.0, true);
+        A->read_data(pathname);
+        A->init_irrPts(pathname);
+        int my_irrgPts_gid[A->num_irrgPts];
+        for (int i = 0; i < A->num_irrgPts; i++)// collect global idx of irrgPts who lie in my domain
+            my_irrgPts_gid[i] = A->irrgPts[i].gid;
 
-        if (strstr(case_name.c_str(), "DEMO")) {
-            if (A->num_diag == 7) {
-                // srand(time(0));
-                // rand
-                A->set_diag_val(0, -1.0);
-                A->set_diag_val(1, -1.0);
-                A->set_diag_val(2, -1.0);
-                A->set_diag_val(3,  6.0);
-                A->set_diag_val(4, -1.0);
-                A->set_diag_val(5, -1.0);
-                A->set_diag_val(6, -1.0);
-                // A->set_diag_val(0, -1.0);
-                // A->set_diag_val(1, -2.0);
-                // A->set_diag_val(2, -4.0);
-                // A->set_diag_val(3, 14.0);
-                // A->set_diag_val(4, -4.0);
-                // A->set_diag_val(5, -2.0);
-                // A->set_diag_val(6, -1.0);
-            }
-            else if (A->num_diag == 19) {
-                //                             A->set_diag_val(0, -1.0);
-                // A->set_diag_val(1, -1.0);   A->set_diag_val(2, -1.0); A->set_diag_val(3, -1.0);
-                //                             A->set_diag_val(4, -1.0);
-                
-                // A->set_diag_val(5, -1.0); A->set_diag_val(6, -1.0); A->set_diag_val(7, -1.0);
-                // A->set_diag_val(8, -1.0); A->set_diag_val(9, 18.0); A->set_diag_val(10,-1.0);
-                // A->set_diag_val(11,-1.0); A->set_diag_val(12,-1.0); A->set_diag_val(13,-1.0);
-                
-                //                             A->set_diag_val(14,-1.0);
-                // A->set_diag_val(15,-1.0);   A->set_diag_val(16,-1.0); A->set_diag_val(17,-1.0);
-                //                             A->set_diag_val(18,-1.0);
+        b->read_data(pathname, "array_b");
+        b->init_irrgPts(A->num_irrgPts, my_irrgPts_gid, (pathname + "/irgP_b").c_str());
 
-                                            A->set_diag_val(0, -0.5);
-                A->set_diag_val(1, -0.25);  A->set_diag_val(2, -1.0); A->set_diag_val(3, -0.5);
-                                            A->set_diag_val(4, -4.0);
-                
-                A->set_diag_val(5, -1.0); A->set_diag_val(6, -2.0); A->set_diag_val(7, -2.0);
-                A->set_diag_val(8,-10.0); A->set_diag_val(9, 36.0); A->set_diag_val(10,-10.0);
-                A->set_diag_val(11,-4.0); A->set_diag_val(12,-0.5); A->set_diag_val(13,-0.125);
-                
-                                            A->set_diag_val(0, -0.5);
-                A->set_diag_val(1, -0.25);  A->set_diag_val(2, -2.0); A->set_diag_val(3, -0.125);
-                                            A->set_diag_val(4, -1.0);
-            }
-            else if (A->num_diag == 27) {
-                A->set_diag_val(0, -1.0); A->set_diag_val(1, -1.0); A->set_diag_val(2, -1.0);
-                A->set_diag_val(3, -1.0); A->set_diag_val(4, -1.0); A->set_diag_val(5, -1.0);
-                A->set_diag_val(6, -1.0); A->set_diag_val(7, -1.0); A->set_diag_val(8, -1.0);
-
-                A->set_diag_val(9, -1.0); A->set_diag_val(10,-1.0); A->set_diag_val(11,-1.0);
-                A->set_diag_val(12,-1.0); A->set_diag_val(13,30.0); A->set_diag_val(14,-1.0);
-                A->set_diag_val(15,-1.0); A->set_diag_val(16,-1.0); A->set_diag_val(17,-1.0);
-
-                A->set_diag_val(18,-1.0); A->set_diag_val(19,-1.0); A->set_diag_val(20,-1.0);
-                A->set_diag_val(21,-1.0); A->set_diag_val(22,-1.0); A->set_diag_val(23,-1.0);
-                A->set_diag_val(24,-1.0); A->set_diag_val(25,-1.0); A->set_diag_val(26,-1.0);
-            }
-            A->set_boundary();
-            A->update_halo();
-            b->set_val(1.0, false);// 右端项为全1向量
-            // {
-            //     const int   jbeg = b->local_vector->halo_y, jend = b->local_vector->local_y,
-            //                 ibeg = b->local_vector->halo_x, iend = b->local_vector->local_x,
-            //                 kbeg = b->local_vector->halo_z, kend = b->local_vector->local_z;
-            //     #pragma omp parallel for collapse(3) schedule(static)
-            //     for (int j = jbeg; j < jend; j++)
-            //     for (int i = ibeg; i < iend; i++)
-            //     for (int k = kbeg; k < kend; k++) {
-            //         int linear = ((j - jbeg) * b->local_vector->local_x + i - ibeg)
-            //             * b->local_vector->local_z + k - kbeg;
-            //         b->local_vector->data[j * b->local_vector->slice_ki_size
-            //             + i * b->local_vector->slice_k_size + k] = (linear % 100) / 10.0;
-            //     }
-            // }
-            // x->set_val(1.0, false);
-            // A->Mult(*x, *b, false);
-            // vec_scale(1.001, *b);
-        } else {
-            b->read_data(pathname, "array_b");
-            // if (strcmp(case_name.c_str(), "GRAPES" ) == 0) x->read_data(pathname, "array_x");
-            A->read_data(pathname);
-        }
+        x = new par_structVector<IDX_TYPE, KSP_TYPE>(*b); x->set_val(0.0, true);// 迪利克雷边界条件
+        y = new par_structVector<IDX_TYPE, KSP_TYPE>(*b); y->set_val(0.0, true);
+        x->read_data(pathname, "array_x");
+        x->init_irrgPts(A->num_irrgPts, my_irrgPts_gid, (pathname + "/irgP_x").c_str());
         
         double fine_dot = vec_dot<IDX_TYPE, KSP_TYPE, double>(*b, *b);
         if (my_pid == 0) printf(" (b , b ) = %.27e\n", fine_dot);
@@ -192,9 +104,9 @@ int main(int argc, char ** argv)
         b->write_CSR_bin(pathname, "b.bin");
         x->write_CSR_bin(pathname, "x0.bin");
 #endif
-        
-#if KSP_BIT==64 && PC_BIT==32
-        precond = new Adaptor_64_for_32(argv + cnt, argc - cnt, true);
+
+#if KSP_BIT==64 && PC_BIT==32 
+        precond = new Adaptor_64_for_32(argv + cnt, argc - cnt);
 #else
         static_assert(  (KSP_BIT==64 && PC_BIT==64) || 
                         (KSP_BIT==32              ) );
@@ -208,52 +120,21 @@ int main(int argc, char ** argv)
             else if (strstr(prc_name.c_str(), "S")) type = SYMMETRIC;
             if (my_pid == 0) printf("  using \033[1;35mpointwise-GS %d\033[0m as preconditioner\n", type);
             precond = new PointGS<IDX_TYPE, PC_TYPE, KSP_TYPE>(type);
-        } else if (strstr(prc_name.c_str(), "LGS")) {
-            SCAN_TYPE type = SYMMETRIC;
-            if      (strstr(prc_name.c_str(), "F")) type = FORWARD;
-            else if (strstr(prc_name.c_str(), "B")) type = BACKWARD;
-            else if (strstr(prc_name.c_str(), "S")) type = SYMMETRIC;
-            if (my_pid == 0) printf("  using \033[1;35mlinewise-GS %d\033[0m as preconditioner\n", type);
-            precond = new LineGS<IDX_TYPE, PC_TYPE, KSP_TYPE>(type, VERT, x->comm_pkg);
         } else if (prc_name == "GMG") {
             IDX_TYPE num_discrete = atoi(argv[cnt++]);
             IDX_TYPE num_Galerkin = atoi(argv[cnt++]);
             std::unordered_map<std::string, RELAX_TYPE> trans_smth;
             trans_smth["PGS"]= PGS;
-            trans_smth["LGS"]= LGS;
-            trans_smth["BILU3d7"] = BILU3d7;
-            trans_smth["BILU3d15"] = BILU3d15;
-            trans_smth["BILU3d19"] = BILU3d19;
-            trans_smth["BILU3d27"] = BILU3d27;
-            trans_smth["PILU"] = PILU;
-            trans_smth["LU"] = GaussElim;
             std::vector<RELAX_TYPE> rel_types;
             for (IDX_TYPE i = 0; i < num_discrete + num_Galerkin + 1; i++) {
                 rel_types.push_back(trans_smth[argv[cnt++]]);
-                // if (my_pid == 0) printf("i %d type %d\n", i, rel_types[i]);
             }
             precond = new GeometricMultiGrid<IDX_TYPE, PC_TYPE, KSP_TYPE>
                 (num_discrete, num_Galerkin, {}, rel_types);
-        } else if (strstr(prc_name.c_str(), "BILU")) {
-            BlockILU_type type_3d = ILU_3D27;
-            if     (strstr(prc_name.c_str(), "3d7" )) type_3d = ILU_3D7 ;
-            else if(strstr(prc_name.c_str(), "3d15")) type_3d = ILU_3D15;
-            else if(strstr(prc_name.c_str(), "3d19")) type_3d = ILU_3D19;
-            else if(strstr(prc_name.c_str(), "3d27")) type_3d = ILU_3D27;
-            else {
-                if (my_pid == 0) printf("Error: unsupported types of Blockwise-ILU\n");
-                MPI_Abort(MPI_COMM_WORLD, -20230121);
-            }
-            if (my_pid == 0) printf("  using \033[1;35mblock-ILU type %d\033[0m as preconditioner\n", type_3d);
-            precond = new BlockILU<IDX_TYPE, PC_TYPE, KSP_TYPE>(type_3d);
-        } else if (prc_name == "PILU") {
-            if (my_pid == 0) printf("  using \033[1;35mplane-ILU\033[0m as preconditioner\n");
-            precond = new PlaneILU<IDX_TYPE, PC_TYPE, KSP_TYPE>(ILU_2D9);
         } else {
             if (my_pid == 0) printf("NO preconditioner was set.\n");
         }
 #endif
-        
 
         if (its_name == "GCR") {
             solver = new GCRSolver<IDX_TYPE, KSP_TYPE, PC_TYPE>;
@@ -269,13 +150,8 @@ int main(int argc, char ** argv)
         }
 
         solver->SetMaxIter(200);
-        if (strcmp(case_name.c_str(), "GRAPES" ) == 0) {// 使用绝对残差
-            if (its_name == "GCR") solver->SetAbsTol(1e-10);// 注意：这一版的GCR里用的是点积结果（不开根）判敛，实际是范数的平方
-            else solver->SetAbsTol(1e-5);
-        } else {// 其它算例使用相对残差
-            if (its_name == "GCR") solver->SetRelTol(1e-18);
-            else solver->SetRelTol(1e-9);
-        }
+        if (its_name == "GCR") solver->SetRelTol(1e-14);// 注意：这一版的GCR里用的是点积结果（不开根）判敛，实际是范数的平方
+            else solver->SetRelTol(1e-7);
         if (precond != nullptr) solver->SetPreconditioner(*precond);
         solver->SetOperator(*A);
         

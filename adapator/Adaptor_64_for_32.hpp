@@ -52,46 +52,17 @@ Adaptor_64_for_32::Adaptor_64_for_32(char * namelist[], const int list_length, b
         else if (strstr(prc_name.c_str(), "S")) type = SYMMETRIC;
         if (my_pid == 0) printf("Adaptor:  using \033[1;35mpointwise-GS %d\033[0m as preconditioner\n", type);
         real_prec = new PointGS<int, __fp16, float>(type);
-    } else if (strstr(prc_name.c_str(), "LGS")) {
-        SCAN_TYPE type = SYMMETRIC;
-        if      (strstr(prc_name.c_str(), "F")) type = FORWARD;
-        else if (strstr(prc_name.c_str(), "B")) type = BACKWARD;
-        else if (strstr(prc_name.c_str(), "S")) type = SYMMETRIC;
-        if (my_pid == 0) printf("Adaptor:  using \033[1;35mlinewise-GS %d\033[0m as preconditioner\n", type);
-        real_prec = new LineGS<int, __fp16, float>(type, VERT);
     } else if (prc_name == "GMG") {
         int num_discrete = atoi(namelist[cnt++]);
         int num_Galerkin = atoi(namelist[cnt++]);
         std::unordered_map<std::string, RELAX_TYPE> trans_smth;
         trans_smth["PGS"]= PGS;
-        trans_smth["LGS"]= LGS;
-        trans_smth["BILU3d7"] = BILU3d7;
-        trans_smth["BILU3d15"] = BILU3d15;
-        trans_smth["BILU3d19"] = BILU3d19;
-        trans_smth["BILU3d27"] = BILU3d27;
-        trans_smth["PILU"] = PILU;
-        trans_smth["LU"] = GaussElim;
         std::vector<RELAX_TYPE> rel_types;
         for (IDX_TYPE i = 0; i < num_discrete + num_Galerkin + 1; i++) {
             rel_types.push_back(trans_smth[namelist[cnt++]]);
             // if (my_pid == 0) printf("i %d type %d\n", i, rel_types[i]);
         }
         real_prec = new GeometricMultiGrid<int, __fp16, float>(num_discrete, num_Galerkin, {}, rel_types);
-    } else if (strstr(prc_name.c_str(), "BILU")) {
-        BlockILU_type type_3d = ILU_3D27;
-        if     (strstr(prc_name.c_str(), "3d7" )) type_3d = ILU_3D7 ;
-        else if(strstr(prc_name.c_str(), "3d15")) type_3d = ILU_3D15;
-        else if(strstr(prc_name.c_str(), "3d19")) type_3d = ILU_3D19;
-        else if(strstr(prc_name.c_str(), "3d27")) type_3d = ILU_3D27;
-        else {
-            if (my_pid == 0) printf("Adaptor: Error: unsupported types of Blockwise-ILU\n");
-            MPI_Abort(MPI_COMM_WORLD, -20230121);
-        }
-        if (my_pid == 0) printf("Adaptor:  using \033[1;35mblock-ILU type %d\033[0m as preconditioner\n", type_3d);
-        real_prec = new BlockILU<int, __fp16, float>(type_3d);
-    } else if (prc_name == "PILU") {
-        if (my_pid == 0) printf("Adaptor:  using \033[1;35mplane-ILU\033[0m as preconditioner\n");
-        real_prec = new PlaneILU<int, __fp16, float>(ILU_2D9);
     } else {
         if (my_pid == 0) printf("Adaptor: NO preconditioner was set.\n");
     }
@@ -125,19 +96,35 @@ void Adaptor_64_for_32::SetOperator(const Operator<int, double, double> & op) {
         #pragma omp parallel for schedule(static)
         for (int i = 0; i < tot_len; i++)
             seq_A_trc.data[i] = seq_A.data[i];
+        // 非规则点
+        if (A_problem.num_irrgPts > 0) {
+            const int num_irrgPts = A_problem.num_irrgPts;
+            A_trc->num_irrgPts = num_irrgPts;
+            A_trc->irrgPts = new irrgPts_mat<int> [num_irrgPts];
+            for (int ir = 0; ir < num_irrgPts; ir++) 
+                A_trc->irrgPts[ir] = A_problem.irrgPts[ir];
+
+            const int tot_nnz = A_trc->irrgPts[num_irrgPts-1].beg + A_trc->irrgPts[num_irrgPts-1].nnz;
+            A_trc->irrgPts_ngb_ijk = new int [tot_nnz * 3];// i j k
+            for (int j = 0; j < tot_nnz * 3; j++)
+                A_trc->irrgPts_ngb_ijk[j] = A_problem.irrgPts_ngb_ijk[j];
+
+            A_trc->irrgPts_A_vals = new float [tot_nnz * 2];// two-sided effect
+            for (int j = 0; j < tot_nnz * 2; j++)
+                A_trc->irrgPts_A_vals[j] = A_problem.irrgPts_A_vals[j];
+        }
     }
     if (real_prec) {// 有预条件
         int my_pid; MPI_Comm_rank(MPI_COMM_WORLD, &my_pid);
         if (my_pid == 0) printf("prec need to scale\n");
-        if (prc_name == "GMG") {// 多重网格先做完Galerkin三重积之后，在建立smoother前再做scale
-            ((GeometricMultiGrid<int, __fp16, float>*)real_prec)->scale_before_setup_smoothers = scale_before_setup;
-            real_prec->SetOperator(*A_trc);
-        } else {// 普通的预条件scale完再传进去
-            A_trc->scale(1.0);
-            real_prec->SetOperator(*A_trc);
-        }
+        real_prec->SetOperator(*A_trc);
     }
     tmp_b = new par_structVector<int, float>(MPI_COMM_WORLD, gx, gy, gz, px, py, pz, A_problem.num_diag!=7);
+
+    int irrgPts_gids[A_trc->num_irrgPts];
+    for (int ir = 0; ir < A_trc->num_irrgPts; ir++)
+        irrgPts_gids[ir] = A_trc->irrgPts[ir].gid;
+    tmp_b->init_irrgPts(A_trc->num_irrgPts, irrgPts_gids);
     tmp_x = new par_structVector<int, float>(*tmp_b);
 }
 
@@ -223,6 +210,11 @@ void Adaptor_64_for_32::Mult(const par_structVector<int, double> & input,
             for (int k = 0; k < col_height; k++)
                 dst_ptr[k] = src_ptr[k];
         }
+        assert(input.num_irrgPts == tmp_b->num_irrgPts);
+        for (int ir = 0; ir < input.num_irrgPts; ir++) {
+            assert(tmp_b->irrgPts[ir].gid == input.irrgPts[ir].gid);
+            tmp_b->irrgPts[ir].val = input.irrgPts[ir].val;
+        }
     }
     if (this->zero_guess == false) {// 有非零初始值
         const seq_structVector<int, double> & src = *(output.local_vector);
@@ -235,6 +227,11 @@ void Adaptor_64_for_32::Mult(const par_structVector<int, double> & input,
             float       * dst_ptr = dst.data + j * vec_ki_size + i * vec_k_size + kbeg;
             for (int k = 0; k < col_height; k++)
                 dst_ptr[k] = src_ptr[k];
+        }
+        assert(output.num_irrgPts == tmp_x->num_irrgPts);
+        for (int ir = 0; ir < output.num_irrgPts; ir++) {
+            assert(tmp_x->irrgPts[ir].gid == output.irrgPts[ir].gid);
+            tmp_x->irrgPts[ir].val = output.irrgPts[ir].val;
         }
     }
 
@@ -262,6 +259,11 @@ void Adaptor_64_for_32::Mult(const par_structVector<int, double> & input,
             double     * dst_ptr = dst.data + j * vec_ki_size + i * vec_k_size + kbeg;
             for (int k = 0; k < col_height; k++)
                 dst_ptr[k] = src_ptr[k];
+        }
+        assert(output.num_irrgPts == tmp_x->num_irrgPts);
+        for (int ir = 0; ir < output.num_irrgPts; ir++) {
+            assert(tmp_x->irrgPts[ir].gid == output.irrgPts[ir].gid);
+            output.irrgPts[ir].val = tmp_x->irrgPts[ir].val;
         }
     }
     this->zero_guess = false;

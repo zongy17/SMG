@@ -65,6 +65,30 @@ void inline AOS_spmv_3d7_scaled(const idx_t num,
 
 // ================================= PGS ==================================
 template<typename idx_t, typename data_t, typename calc_t>
+void inline AOS_point_forward_zero_3d7_irr(const idx_t num,
+    const idx_t vec_k_size, const idx_t vec_ki_size, const data_t wgt,
+    const data_t * L_jik, const data_t * U_jik, const calc_t * b_jik, calc_t * x_jik, const calc_t * dummy,
+    const idx_t irr_k, const calc_t irr_contrib)
+{
+    const calc_t * x_jNi   = x_jik   - vec_ki_size;
+    for (idx_t k = 0; k < num; k++) {
+        calc_t diag_val = L_jik[3];
+        calc_t tmp = 
+            + L_jik[0] * x_jNi[               k  ]
+            + L_jik[1] * x_jik[- vec_k_size + k  ]
+            + L_jik[2] * x_jik[               k-1];// L * x_{k+1}
+        tmp = b_jik[k] - tmp;// b - L*x_{k+1}
+        if (k == irr_k) tmp -= irr_contrib;
+        // int my_pid; MPI_Comm_rank(MPI_COMM_WORLD, &my_pid);
+        // printf("proc %d irr_k %d contrib %.7e tmp %.7e\n", my_pid, irr_k, irr_contrib, tmp);
+        
+        x_jik[k] = wgt * tmp / diag_val;
+        L_jik += 4;// 下三角部分包含对角线
+    }
+}
+
+
+template<typename idx_t, typename data_t, typename calc_t>
 void inline AOS_point_forward_zero_3d7(const idx_t num,
     const idx_t vec_k_size, const idx_t vec_ki_size, const data_t wgt,
     const data_t * L_jik, const data_t * U_jik, const calc_t * b_jik, calc_t * x_jik, const calc_t * dummy)
@@ -130,6 +154,37 @@ void inline AOS_point_forward_ALL_3d7(const idx_t num,
 }
 
 template<typename idx_t, typename data_t, typename calc_t>
+void inline AOS_point_forward_ALL_3d7_irr(const idx_t num,
+    const idx_t vec_k_size, const idx_t vec_ki_size, const data_t wgt,
+    const data_t * L_jik, const data_t * U_jik, const calc_t * b_jik, calc_t * x_jik, const calc_t * dummy,
+    const idx_t irr_k, const calc_t irr_contrib)
+{
+    const calc_t one_minus_weight = 1.0 - wgt;
+    const calc_t * x_jNi   = x_jik   - vec_ki_size, * x_jPi   = x_jik   + vec_ki_size;
+    for (idx_t k = 0; k < num; k++) {
+        calc_t diag_val = L_jik[3];// = U_jik[3]
+        calc_t tmp = 
+        + L_jik[0] * x_jNi[               k    ]
+        + L_jik[1] * x_jik[- vec_k_size + k    ]
+        + L_jik[2] * x_jik[               k - 1]
+        // + A_jik[3] * x_jik[               k    ]
+        + U_jik[0] * x_jik[               k + 1]
+        + U_jik[1] * x_jik[  vec_k_size + k    ]
+        + U_jik[2] * x_jPi[               k    ];// U*x_{k} + L*x_{k+1}
+        tmp = b_jik[k] - tmp;// b - U*x_{k} - L*x_{k+1}
+        if (k == irr_k) tmp -= irr_contrib;
+
+        // int my_pid; MPI_Comm_rank(MPI_COMM_WORLD, &my_pid);
+        // printf("proc %d irr_k %d contrib %.7e tmp %.7e\n", my_pid, irr_k, irr_contrib, tmp);
+
+        x_jik[k] *= one_minus_weight;
+        x_jik[k] += wgt * tmp / diag_val;
+        L_jik += 4;
+        U_jik += 4;
+    }
+}
+
+template<typename idx_t, typename data_t, typename calc_t>
 void inline AOS_point_forward_ALL_3d7_scaled(const idx_t num,
     const idx_t vec_k_size, const idx_t vec_ki_size, const data_t wgt,
     const data_t * L_jik, const data_t * U_jik, const calc_t * b_jik, calc_t * x_jik, const calc_t * sqD_jik)
@@ -176,6 +231,28 @@ void inline AOS_point_backward_zero_3d7(const idx_t num,
 }
 
 template<typename idx_t, typename data_t, typename calc_t>
+void inline AOS_point_backward_zero_3d7_irr(const idx_t num,
+    const idx_t vec_k_size, const idx_t vec_ki_size, const data_t wgt,
+    const data_t * L_jik, const data_t * U_jik, const calc_t * b_jik, calc_t * x_jik, const calc_t * dummy,
+    const idx_t irr_k, const calc_t irr_contrib)
+{
+    const calc_t * x_jPi   = x_jik   + vec_ki_size;
+    const idx_t end = - num;
+    for (idx_t k = 0; k > end; k--) {
+        calc_t diag_val = U_jik[3];
+        calc_t tmp = 
+            + U_jik[0] * x_jik[               k + 1]
+            + U_jik[1] * x_jik[  vec_k_size + k    ]
+            + U_jik[2] * x_jPi[               k    ];// U*x_{k+1}
+            tmp = b_jik[k] - tmp;// b - U*x_{k+1}
+            if (k == irr_k) tmp -= irr_contrib;
+
+            x_jik[k] = wgt * tmp / diag_val;
+        U_jik -= 4;
+    }   
+}
+
+template<typename idx_t, typename data_t, typename calc_t>
 void inline AOS_point_backward_zero_3d7_scaled(const idx_t num,
     const idx_t vec_k_size, const idx_t vec_ki_size, const data_t wgt,
     const data_t * L_jik, const data_t * U_jik, const calc_t * b_jik, calc_t * x_jik, const calc_t * sqD_jik)
@@ -214,6 +291,34 @@ void inline AOS_point_backward_ALL_3d7(const idx_t num,
         + U_jik[1] * x_jik[  vec_k_size + k    ]
         + U_jik[2] * x_jPi[               k    ];// U*x_{k} + L*x_{k+1}
         tmp = b_jik[k] - tmp;// b - U*x_{k} - L*x_{k+1}
+
+        x_jik[k] *= one_minus_weight;
+        x_jik[k] += wgt * tmp / diag_val;
+        L_jik -= 4;
+        U_jik -= 4;
+    }
+}
+
+template<typename idx_t, typename data_t, typename calc_t>
+void inline AOS_point_backward_ALL_3d7_irr(const idx_t num,
+    const idx_t vec_k_size, const idx_t vec_ki_size, const data_t wgt,
+    const data_t * L_jik, const data_t * U_jik, const calc_t * b_jik, calc_t * x_jik, const calc_t * dummy,
+    const idx_t irr_k, const calc_t irr_contrib)
+{
+    const calc_t one_minus_weight = 1.0 - wgt;
+    const calc_t * x_jNi   = x_jik   - vec_ki_size, * x_jPi   = x_jik   + vec_ki_size;
+    const idx_t end = - num;
+    for (idx_t k = 0; k > end; k--) {
+        calc_t diag_val = U_jik[3];
+        calc_t tmp = 
+        + L_jik[0] * x_jNi[               k    ]
+        + L_jik[1] * x_jik[- vec_k_size + k    ]
+        + L_jik[2] * x_jik[               k - 1]
+        + U_jik[0] * x_jik[               k + 1]
+        + U_jik[1] * x_jik[  vec_k_size + k    ]
+        + U_jik[2] * x_jPi[               k    ];// U*x_{k} + L*x_{k+1}
+        tmp = b_jik[k] - tmp;// b - U*x_{k} - L*x_{k+1}
+        if (k == irr_k) tmp -= irr_contrib;
 
         x_jik[k] *= one_minus_weight;
         x_jik[k] += wgt * tmp / diag_val;
@@ -512,6 +617,99 @@ void inline SOA_point_forward_zero_3d7_Cal32Stg16(const int num,
     }
 }
 
+void inline SOA_point_forward_zero_3d7_Cal32Stg16_irr(const int num,
+    const int vec_k_size, const int vec_ki_size, const float weight,
+    const __fp16 * Diags[1], const float * b3, float * x3, const float * dummy,
+    const float * iR/* irregular contribution */)
+{
+    const __fp16* A0_3 = Diags[0];
+    const float * x0 = x3 - vec_ki_size,
+                * x1 = x3 - vec_k_size ;
+    
+    float32x4_t A0_32_0, A1_32_0, A2_32_0, A3_32_0,
+                A0_32_1, A1_32_1, A2_32_1, A3_32_1;
+    float32x4_t x0_32_0, x1_32_0,
+                x0_32_1, x1_32_1;
+    float32x4_t vwgts = vdupq_n_f32(weight);
+    static_assert(GROUP_LEN == 8 && NEON_LEN == 4);
+    int k = 0, max_gk = num & (~(GROUP_LEN - 1)), max_nk = num & (~(NEON_LEN - 1));
+    for ( ; k < max_gk; k += GROUP_LEN) {
+        float16x8x4_t A0_3_16;
+        float32x4_t tmp_0, tmp_1, irg_0, irg_1;
+        // A0~A3，其中A3为对角线
+        A0_3_16 = vld4q_f16(A0_3); A0_3 += GROUP_LEN * 4; __builtin_prefetch(A0_3 + GROUP_LEN * 16, 0, 0);
+        A0_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[0])); A0_32_1 = vcvt_high_f32_f16(A0_3_16.val[0]);
+        A1_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[1])); A1_32_1 = vcvt_high_f32_f16(A0_3_16.val[1]);
+        A2_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[2])); A2_32_1 = vcvt_high_f32_f16(A0_3_16.val[2]);
+        A3_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[3])); A3_32_1 = vcvt_high_f32_f16(A0_3_16.val[3]);
+        irg_0   = vld1q_f32(iR); iR += NEON_LEN; irg_1   = vld1q_f32(iR); iR += NEON_LEN; __builtin_prefetch(iR + NEON_LEN, 0);
+        tmp_0   = vld1q_f32(b3); b3 += NEON_LEN; tmp_1   = vld1q_f32(b3); b3 += NEON_LEN; __builtin_prefetch(b3 + NEON_LEN, 0);
+        x0_32_0 = vld1q_f32(x0); x0 += NEON_LEN; x0_32_1 = vld1q_f32(x0); x0 += NEON_LEN; __builtin_prefetch(x0 + NEON_LEN, 0);
+        x1_32_0 = vld1q_f32(x1); x1 += NEON_LEN; x1_32_1 = vld1q_f32(x1); x1 += NEON_LEN; __builtin_prefetch(x1 + NEON_LEN, 0);
+        // 本柱的x不用读入到向量寄存器内
+        // 先把非本柱的算好
+        tmp_0 = vmlsq_f32(tmp_0, A0_32_0 , x0_32_0); tmp_1 = vmlsq_f32(tmp_1, A0_32_1, x0_32_1);
+        tmp_0 = vmlsq_f32(tmp_0, A1_32_0 , x1_32_0); tmp_1 = vmlsq_f32(tmp_1, A1_32_1, x1_32_1);
+        A3_32_0 = vdivq_f32(vwgts, A3_32_0); A3_32_1 = vdivq_f32(vwgts, A3_32_1);
+        tmp_0 = vsubq_f32(tmp_0, irg_0); tmp_1 = vsubq_f32(tmp_1, irg_1);
+        vst1q_f32(x3, tmp_0);
+        x3[0] = (x3[0] - vgetq_lane_f32(A2_32_0, 0) * x3[-1]) * vgetq_lane_f32(A3_32_0, 0);
+        x3[1] = (x3[1] - vgetq_lane_f32(A2_32_0, 1) * x3[ 0]) * vgetq_lane_f32(A3_32_0, 1);
+        x3[2] = (x3[2] - vgetq_lane_f32(A2_32_0, 2) * x3[ 1]) * vgetq_lane_f32(A3_32_0, 2);
+        x3[3] = (x3[3] - vgetq_lane_f32(A2_32_0, 3) * x3[ 2]) * vgetq_lane_f32(A3_32_0, 3);
+        x3 += NEON_LEN;
+        vst1q_f32(x3, tmp_1);
+        x3[0] = (x3[0] - vgetq_lane_f32(A2_32_1, 0) * x3[-1]) * vgetq_lane_f32(A3_32_1, 0);
+        x3[1] = (x3[1] - vgetq_lane_f32(A2_32_1, 1) * x3[ 0]) * vgetq_lane_f32(A3_32_1, 1);
+        x3[2] = (x3[2] - vgetq_lane_f32(A2_32_1, 2) * x3[ 1]) * vgetq_lane_f32(A3_32_1, 2);
+        x3[3] = (x3[3] - vgetq_lane_f32(A2_32_1, 3) * x3[ 2]) * vgetq_lane_f32(A3_32_1, 3);
+        x3 += NEON_LEN; __builtin_prefetch(x3 + NEON_LEN,1);
+    }
+    for ( ; k < max_nk; k += NEON_LEN) {
+        float16x4x4_t A0_3_16;
+        float32x4_t tmp_0, irg_0;
+        // A0~A3，其中A3为对角线
+        A0_3_16 = vld4_f16(A0_3); A0_3 += NEON_LEN * 4; __builtin_prefetch(A0_3 + NEON_LEN * 16, 0, 0);
+        A0_32_0 = vcvt_f32_f16(A0_3_16.val[0]);// 此时只剩前半段有效
+        A1_32_0 = vcvt_f32_f16(A0_3_16.val[1]);
+        A2_32_0 = vcvt_f32_f16(A0_3_16.val[2]);
+        A3_32_0 = vcvt_f32_f16(A0_3_16.val[3]);
+        irg_0   = vld1q_f32(iR); iR += NEON_LEN; __builtin_prefetch(iR + NEON_LEN, 0);
+        tmp_0   = vld1q_f32(b3); b3 += NEON_LEN; __builtin_prefetch(b3 + NEON_LEN, 0);
+        x0_32_0 = vld1q_f32(x0); x0 += NEON_LEN; __builtin_prefetch(x0 + NEON_LEN, 0);
+        x1_32_0 = vld1q_f32(x1); x1 += NEON_LEN; __builtin_prefetch(x1 + NEON_LEN, 0);
+        // 先把非本柱的算好
+        tmp_0 = vmlsq_f32(tmp_0, A0_32_0 , x0_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A1_32_0 , x1_32_0);
+        A3_32_0 = vdivq_f32(vwgts, A3_32_0);
+        tmp_0 = vsubq_f32(tmp_0, irg_0);
+        vst1q_f32(x3, tmp_0);
+        x3[0] = (x3[0] - vgetq_lane_f32(A2_32_0, 0) * x3[-1]) * vgetq_lane_f32(A3_32_0, 0);
+        x3[1] = (x3[1] - vgetq_lane_f32(A2_32_0, 1) * x3[ 0]) * vgetq_lane_f32(A3_32_0, 1);
+        x3[2] = (x3[2] - vgetq_lane_f32(A2_32_0, 2) * x3[ 1]) * vgetq_lane_f32(A3_32_0, 2);
+        x3[3] = (x3[3] - vgetq_lane_f32(A2_32_0, 3) * x3[ 2]) * vgetq_lane_f32(A3_32_0, 3);
+        x3 += NEON_LEN; __builtin_prefetch(x3 + NEON_LEN,1);
+    }
+    for (k = 0; k < num - max_nk; k++) {// 做完剩下的元素
+        float diag_val = A0_3[3];
+        float tmp = 
+        + A0_3[0] * x0[k  ] + A0_3[1] * x1[k  ] + A0_3[2] * x3[k-1];
+        tmp = b3[k] - tmp - iR[k];// b - L*x_{k+1}
+        x3[k] = weight * tmp / diag_val;
+        A0_3 += 4;
+    }
+    /*
+    for (int k = 0; k < num; k++) {
+        float diag_val = A0_3[3];
+        float tmp = 
+        + A0_3[0] * x0[k  ] + A0_3[1] * x1[k  ] + A0_3[2] * x3[k-1];
+        tmp = b3[k] - tmp - iR[k];// b - L*x_{k+1}
+        // if (k == irr_k) tmp -= irr_contrib;
+        x3[k] = weight * tmp / diag_val;
+        A0_3 += 4;
+    }*/
+}
+
 void inline SOA_point_forward_ALL_3d7_Cal32Stg16(const int num,
     const int vec_k_size, const int vec_ki_size, const float weight,
     const __fp16 * Diags[2], const float * b3, float * x3, const float * dummy)
@@ -621,6 +819,122 @@ void inline SOA_point_forward_ALL_3d7_Cal32Stg16(const int num,
         A0_3 += 4; A3_6 += 4;
     }
 }
+
+void inline SOA_point_forward_ALL_3d7_Cal32Stg16_irr(const int num,
+    const int vec_k_size, const int vec_ki_size, const float weight,
+    const __fp16 * Diags[2], const float * b3, float * x3, const float * dummy,
+    const float * iR)
+{// ()
+    const __fp16* A0_3 = Diags[0], * A3_6 = Diags[1];
+    const float * x0 = x3 - vec_ki_size, * x6 = x3 + vec_ki_size,
+                * x1 = x3 - vec_k_size , * x5 = x3 + vec_k_size ;
+    float32x4_t A0_32_0, A1_32_0, A2_32_0, diag_32_0,
+                A0_32_1, A1_32_1, A2_32_1, diag_32_1;
+    float32x4_t x0_32_0, x1_32_0,
+                x0_32_1, x1_32_1;
+    float32x4_t vwgts = vdupq_n_f32(weight);
+    float32x4_t vone_minus_wgts = vdupq_n_f32(1.0 - weight);
+    static_assert(GROUP_LEN == 8 && NEON_LEN == 4);
+    int k = 0, max_gk = num & (~(GROUP_LEN - 1)), max_nk = num & (~(NEON_LEN - 1));
+    for ( ; k < max_gk; k += GROUP_LEN) {
+        float16x8x4_t A0_3_16;
+        float32x4_t tmp_0, tmp_1, res_0, res_1, irg_0, irg_1;
+        float A2_buf[GROUP_LEN], A4_buf[GROUP_LEN];// 暂存 wgt*A2/A3 和 wgt*A4/A3
+        A0_3_16 = vld4q_f16(A0_3); A0_3 += GROUP_LEN * 4; __builtin_prefetch(A0_3 + GROUP_LEN * 16, 0, 0);
+        A0_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[0])); A0_32_1 = vcvt_high_f32_f16(A0_3_16.val[0]);// A0
+        A1_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[1])); A1_32_1 = vcvt_high_f32_f16(A0_3_16.val[1]);// A1
+        A2_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[2])); A2_32_1 = vcvt_high_f32_f16(A0_3_16.val[2]);// A2
+        diag_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[3])); diag_32_1 = vcvt_high_f32_f16(A0_3_16.val[3]);// A3
+        diag_32_0 = vdivq_f32(vwgts, diag_32_0); diag_32_1 = vdivq_f32(vwgts, diag_32_1);
+        // 此时diag_32存的是w/A3
+        A2_32_0 = vmulq_f32(A2_32_0, diag_32_0); A2_32_1 = vmulq_f32(A2_32_1, diag_32_1);
+        vst1q_f32(A2_buf, A2_32_0); vst1q_f32(A2_buf + NEON_LEN, A2_32_1);
+        
+        irg_0   = vld1q_f32(iR); iR += NEON_LEN; irg_1   = vld1q_f32(iR); iR += NEON_LEN; __builtin_prefetch(iR + NEON_LEN, 0);
+        tmp_0   = vld1q_f32(b3); b3 += NEON_LEN; tmp_1   = vld1q_f32(b3); b3 += NEON_LEN; __builtin_prefetch(b3 + NEON_LEN, 0);
+        x0_32_0 = vld1q_f32(x0); x0 += NEON_LEN; x0_32_1 = vld1q_f32(x0); x0 += NEON_LEN; __builtin_prefetch(x0 + NEON_LEN, 0);
+        x1_32_0 = vld1q_f32(x1); x1 += NEON_LEN; x1_32_1 = vld1q_f32(x1); x1 += NEON_LEN; __builtin_prefetch(x1 + NEON_LEN, 0);
+        tmp_0 = vmlsq_f32(tmp_0, A0_32_0 , x0_32_0); tmp_1 = vmlsq_f32(tmp_1, A0_32_1, x0_32_1);
+        tmp_0 = vmlsq_f32(tmp_0, A1_32_0 , x1_32_0); tmp_1 = vmlsq_f32(tmp_1, A1_32_1, x1_32_1);
+        // U半部分
+        A0_3_16 = vld4q_f16(A3_6); A3_6 += GROUP_LEN * 4; __builtin_prefetch(A3_6 + GROUP_LEN * 16, 0, 0);
+        A2_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[1])); A2_32_1 = vcvt_high_f32_f16(A0_3_16.val[1]);// A4
+        A1_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[2])); A1_32_1 = vcvt_high_f32_f16(A0_3_16.val[2]);// A5
+        A0_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[3])); A0_32_1 = vcvt_high_f32_f16(A0_3_16.val[3]);// A6
+        A2_32_0 = vmulq_f32(A2_32_0, diag_32_0); A2_32_1 = vmulq_f32(A2_32_1, diag_32_1);
+        vst1q_f32(A4_buf, A2_32_0); vst1q_f32(A4_buf + NEON_LEN, A2_32_1);
+
+        x1_32_0 = vld1q_f32(x5); x5 += NEON_LEN; x1_32_1 = vld1q_f32(x5); x5 += NEON_LEN; __builtin_prefetch(x5 + NEON_LEN, 0);// x5
+        x0_32_0 = vld1q_f32(x6); x6 += NEON_LEN; x0_32_1 = vld1q_f32(x6); x6 += NEON_LEN; __builtin_prefetch(x6 + NEON_LEN, 0);// x6
+        tmp_0 = vmlsq_f32(tmp_0, A1_32_0 , x1_32_0); tmp_1 = vmlsq_f32(tmp_1, A1_32_1, x1_32_1);
+        tmp_0 = vmlsq_f32(tmp_0, A0_32_0 , x0_32_0); tmp_1 = vmlsq_f32(tmp_1, A0_32_1, x0_32_1);// 此时tmp存的是b-非本柱的a*x
+        tmp_0 = vsubq_f32(tmp_0, irg_0); tmp_1 = vsubq_f32(tmp_1, irg_1);
+        float * x_jik = x3;
+        res_0 = vld1q_f32(x3); x3 += NEON_LEN     ; res_1 = vld1q_f32(x3); x3 += NEON_LEN; __builtin_prefetch(x3 + NEON_LEN, 1);
+        res_0 = vmulq_f32(res_0, vone_minus_wgts) ; res_1 = vmulq_f32(res_1, vone_minus_wgts);
+        res_0 = vmlaq_f32(res_0, tmp_0, diag_32_0); res_1 = vmlaq_f32(res_1, tmp_1, diag_32_1);// 此时res存的是(1-w)*x + w/A9*(b-非本柱的a*x)
+        x_jik[0] = vgetq_lane_f32(res_0, 0) - (A2_buf[0] * x_jik[-1] + A4_buf[0] * x_jik[1]);
+        x_jik[1] = vgetq_lane_f32(res_0, 1) - (A2_buf[1] * x_jik[ 0] + A4_buf[1] * x_jik[2]);
+        x_jik[2] = vgetq_lane_f32(res_0, 2) - (A2_buf[2] * x_jik[ 1] + A4_buf[2] * x_jik[3]);
+        x_jik[3] = vgetq_lane_f32(res_0, 3) - (A2_buf[3] * x_jik[ 2] + A4_buf[3] * x_jik[4]);
+        x_jik[4] = vgetq_lane_f32(res_1, 0) - (A2_buf[4] * x_jik[ 3] + A4_buf[4] * x_jik[5]);
+        x_jik[5] = vgetq_lane_f32(res_1, 1) - (A2_buf[5] * x_jik[ 4] + A4_buf[5] * x_jik[6]);
+        x_jik[6] = vgetq_lane_f32(res_1, 2) - (A2_buf[6] * x_jik[ 5] + A4_buf[6] * x_jik[7]);
+        x_jik[7] = vgetq_lane_f32(res_1, 3) - (A2_buf[7] * x_jik[ 6] + A4_buf[7] * x_jik[8]);
+    }
+    for ( ; k < max_nk; k += NEON_LEN) {
+        float16x4x4_t A0_3_16;
+        float32x4_t tmp_0, res_0, irg_0;
+        float A2_buf[NEON_LEN], A4_buf[NEON_LEN];
+        A0_3_16 = vld4_f16(A0_3); A0_3 += NEON_LEN * 4; __builtin_prefetch(A0_3 + NEON_LEN * 16, 0, 0);
+        A0_32_0 = vcvt_f32_f16(A0_3_16.val[0]);
+        A1_32_0 = vcvt_f32_f16(A0_3_16.val[1]);
+        A2_32_0 = vcvt_f32_f16(A0_3_16.val[2]);
+        diag_32_0 = vcvt_f32_f16(A0_3_16.val[3]);
+        diag_32_0 = vdivq_f32(vwgts, diag_32_0);
+        A2_32_0 = vmulq_f32(A2_32_0, diag_32_0);
+        vst1q_f32(A2_buf, A2_32_0);
+        
+        irg_0   = vld1q_f32(iR); iR += NEON_LEN; __builtin_prefetch(iR + NEON_LEN, 0);
+        tmp_0   = vld1q_f32(b3); b3 += NEON_LEN; __builtin_prefetch(b3 + NEON_LEN, 0);
+        x0_32_0 = vld1q_f32(x0); x0 += NEON_LEN; __builtin_prefetch(x0 + NEON_LEN, 0);
+        x1_32_0 = vld1q_f32(x1); x1 += NEON_LEN; __builtin_prefetch(x1 + NEON_LEN, 0);
+
+        tmp_0 = vmlsq_f32(tmp_0, A0_32_0 , x0_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A1_32_0 , x1_32_0);
+        // U半部分
+        A0_3_16 = vld4_f16(A3_6); A3_6 += NEON_LEN * 4; __builtin_prefetch(A3_6 + NEON_LEN * 16, 0, 0);
+        A2_32_0 = vcvt_f32_f16(A0_3_16.val[1]);// A4
+        A1_32_0 = vcvt_f32_f16(A0_3_16.val[2]);// A5
+        A0_32_0 = vcvt_f32_f16(A0_3_16.val[3]);// A6
+        A2_32_0 = vmulq_f32(A2_32_0, diag_32_0);
+        vst1q_f32(A4_buf, A2_32_0);
+        x1_32_0 = vld1q_f32(x5); x5 += NEON_LEN; __builtin_prefetch(x5 + NEON_LEN, 0);// x5
+        x0_32_0 = vld1q_f32(x6); x6 += NEON_LEN; __builtin_prefetch(x6 + NEON_LEN, 0);// x6
+        tmp_0 = vmlsq_f32(tmp_0, A1_32_0 , x1_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A0_32_0 , x0_32_0);
+        tmp_0 = vsubq_f32(tmp_0, irg_0);
+        float * x_jik = x3;
+        res_0 = vld1q_f32(x3); x3 += NEON_LEN     ; __builtin_prefetch(x3 + NEON_LEN, 1);
+        res_0 = vmulq_f32(res_0, vone_minus_wgts) ;
+        res_0 = vmlaq_f32(res_0, tmp_0, diag_32_0);
+        x_jik[0] = vgetq_lane_f32(res_0, 0) - (A2_buf[0] * x_jik[-1] + A4_buf[0] * x_jik[1]);
+        x_jik[1] = vgetq_lane_f32(res_0, 1) - (A2_buf[1] * x_jik[ 0] + A4_buf[1] * x_jik[2]);
+        x_jik[2] = vgetq_lane_f32(res_0, 2) - (A2_buf[2] * x_jik[ 1] + A4_buf[2] * x_jik[3]);
+        x_jik[3] = vgetq_lane_f32(res_0, 3) - (A2_buf[3] * x_jik[ 2] + A4_buf[3] * x_jik[4]);
+    }
+    for ( k = 0; k < num - max_nk; k++) {
+        float diag_val = A0_3[3];
+        float tmp = 
+            + A0_3[0] * x0[k  ] + A0_3[1] * x1[k] + A0_3[2] * x3[k-1]
+            + A3_6[1] * x3[k+1] + A3_6[2] * x5[k] + A3_6[3] * x6[k  ];
+        tmp = b3[k] - tmp - iR[k];
+        x3[k] *= (1.0 - weight);
+        x3[k] += weight * tmp / diag_val;
+        A0_3 += 4; A3_6 += 4;
+    }
+}
+
 
 void inline SOA_point_backward_ALL_3d7_Cal32Stg16(const int num,
     const int vec_k_size, const int vec_ki_size, const float weight,
@@ -735,6 +1049,131 @@ void inline SOA_point_backward_ALL_3d7_Cal32Stg16(const int num,
             + A0_3[0] * x0[k  ] + A0_3[1] * x1[k] + A0_3[2] * x3[k-1]
             + A3_6[1] * x3[k+1] + A3_6[2] * x5[k] + A3_6[3] * x6[k  ];
         tmp = b3[k] - tmp;
+        x3[k] *= (1.0 - weight);
+        x3[k] += weight * tmp / diag_val;
+        A0_3 -= 4; A3_6 -= 4;
+    }
+}
+
+void inline SOA_point_backward_ALL_3d7_Cal32Stg16_irr(const int num,
+    const int vec_k_size, const int vec_ki_size, const float weight,
+    const __fp16 * Diags[2], const float * b3, float * x3, const float * dummy,
+    const float * iR)
+{
+    const __fp16* A0_3 = Diags[0], * A3_6 = Diags[1];
+    const float * x0 = x3 - vec_ki_size, * x6 = x3 + vec_ki_size,
+                * x1 = x3 - vec_k_size , * x5 = x3 + vec_k_size ;
+    float32x4_t A0_32_0, A1_32_0, A2_32_0, diag_32_0,
+                A0_32_1, A1_32_1, A2_32_1, diag_32_1;
+    float32x4_t x0_32_0, x1_32_0,
+                x0_32_1, x1_32_1;
+    float32x4_t vwgts = vdupq_n_f32(weight);
+    float32x4_t vone_minus_wgts = vdupq_n_f32(1.0 - weight);
+    static_assert(GROUP_LEN == 8 && NEON_LEN == 4);
+    int k = num, min_gk = num & (GROUP_LEN - 1), min_nk = num & (NEON_LEN-1);
+    iR += num;
+    for ( ; k > min_gk; k -= GROUP_LEN) {
+        float16x8x4_t A0_3_16;
+        float32x4_t tmp_0, tmp_1, res_0, res_1, irg_0, irg_1;
+        float A2_buf[GROUP_LEN], A4_buf[GROUP_LEN];// 暂存 wgt*A2/A3 和 wgt*A4/A3
+        A0_3 -= GROUP_LEN * 4;
+        A0_3_16 = vld4q_f16(A0_3); __builtin_prefetch(A0_3 - GROUP_LEN * 16, 0, 0);
+        A0_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[0])); A0_32_1 = vcvt_high_f32_f16(A0_3_16.val[0]);// A0
+        A1_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[1])); A1_32_1 = vcvt_high_f32_f16(A0_3_16.val[1]);// A1
+        A2_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[2])); A2_32_1 = vcvt_high_f32_f16(A0_3_16.val[2]);// A2
+        diag_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[3])); diag_32_1 = vcvt_high_f32_f16(A0_3_16.val[3]);// A3
+        diag_32_0 = vdivq_f32(vwgts, diag_32_0); diag_32_1 = vdivq_f32(vwgts, diag_32_1);
+        // 此时diag_32存的是w/A3
+        A2_32_0 = vmulq_f32(A2_32_0, diag_32_0); A2_32_1 = vmulq_f32(A2_32_1, diag_32_1);
+        vst1q_f32(A2_buf, A2_32_0); vst1q_f32(A2_buf + NEON_LEN, A2_32_1);
+        // 注意这里载入的顺序
+        iR -= NEON_LEN; irg_1 = vld1q_f32(iR)  ; iR -= NEON_LEN; irg_0 = vld1q_f32(iR)  ; __builtin_prefetch(iR - GROUP_LEN, 0);
+        b3 -= NEON_LEN; tmp_1 = vld1q_f32(b3)  ; b3 -= NEON_LEN; tmp_0 = vld1q_f32(b3)  ; __builtin_prefetch(b3 - GROUP_LEN, 0);
+        x0 -= NEON_LEN; x0_32_1 = vld1q_f32(x0); x0 -= NEON_LEN; x0_32_0 = vld1q_f32(x0); __builtin_prefetch(x0 - GROUP_LEN, 0);
+        x1 -= NEON_LEN; x1_32_1 = vld1q_f32(x1); x1 -= NEON_LEN; x1_32_0 = vld1q_f32(x1); __builtin_prefetch(x1 - GROUP_LEN, 0);
+        tmp_1 = vmlsq_f32(tmp_1, A0_32_1, x0_32_1); tmp_0 = vmlsq_f32(tmp_0, A0_32_0 , x0_32_0); 
+        tmp_1 = vmlsq_f32(tmp_1, A1_32_1, x1_32_1); tmp_0 = vmlsq_f32(tmp_0, A1_32_0 , x1_32_0); 
+        // U半部分
+        A3_6 -= GROUP_LEN * 4;
+        A0_3_16 = vld4q_f16(A3_6); __builtin_prefetch(A3_6 - GROUP_LEN * 16, 0, 0);
+        A2_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[1])); A2_32_1 = vcvt_high_f32_f16(A0_3_16.val[1]);// A4
+        A1_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[2])); A1_32_1 = vcvt_high_f32_f16(A0_3_16.val[2]);// A5
+        A0_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[3])); A0_32_1 = vcvt_high_f32_f16(A0_3_16.val[3]);// A6
+        A2_32_0 = vmulq_f32(A2_32_0, diag_32_0); A2_32_1 = vmulq_f32(A2_32_1, diag_32_1);
+        vst1q_f32(A4_buf, A2_32_0); vst1q_f32(A4_buf + NEON_LEN, A2_32_1);
+
+        x5 -= NEON_LEN; x1_32_1 = vld1q_f32(x5); x5 -= NEON_LEN; x1_32_0 = vld1q_f32(x5); __builtin_prefetch(x5 - GROUP_LEN, 0);// x5
+        x6 -= NEON_LEN; x0_32_1 = vld1q_f32(x6); x6 -= NEON_LEN; x0_32_0 = vld1q_f32(x6); __builtin_prefetch(x6 - GROUP_LEN, 0);// x6
+        tmp_1 = vmlsq_f32(tmp_1, A1_32_1, x1_32_1); tmp_0 = vmlsq_f32(tmp_0, A1_32_0 , x1_32_0);
+        tmp_1 = vmlsq_f32(tmp_1, A0_32_1, x0_32_1); tmp_0 = vmlsq_f32(tmp_0, A0_32_0 , x0_32_0);// 此时tmp存的是b-非本柱的a*x
+        tmp_1 = vsubq_f32(tmp_1, irg_1); tmp_0 = vsubq_f32(tmp_0, irg_0);
+        x3 -= NEON_LEN; res_1 = vld1q_f32(x3); x3 -= NEON_LEN; res_0 = vld1q_f32(x3); __builtin_prefetch(x3 - GROUP_LEN, 1);
+        res_1 = vmulq_f32(res_1, vone_minus_wgts); res_0 = vmulq_f32(res_0, vone_minus_wgts) ;
+        res_1 = vmlaq_f32(res_1, tmp_1, diag_32_1); res_0 = vmlaq_f32(res_0, tmp_0, diag_32_0); // 此时res存的是(1-w)*x + w*(b-非本柱的a*x)
+        x3[7] = vgetq_lane_f32(res_1, 3) - (A2_buf[7] * x3[ 6] + A4_buf[7] * x3[8]);
+        x3[6] = vgetq_lane_f32(res_1, 2) - (A2_buf[6] * x3[ 5] + A4_buf[6] * x3[7]);
+        x3[5] = vgetq_lane_f32(res_1, 1) - (A2_buf[5] * x3[ 4] + A4_buf[5] * x3[6]);
+        x3[4] = vgetq_lane_f32(res_1, 0) - (A2_buf[4] * x3[ 3] + A4_buf[4] * x3[5]);
+        x3[3] = vgetq_lane_f32(res_0, 3) - (A2_buf[3] * x3[ 2] + A4_buf[3] * x3[4]);
+        x3[2] = vgetq_lane_f32(res_0, 2) - (A2_buf[2] * x3[ 1] + A4_buf[2] * x3[3]);
+        x3[1] = vgetq_lane_f32(res_0, 1) - (A2_buf[1] * x3[ 0] + A4_buf[1] * x3[2]);
+        x3[0] = vgetq_lane_f32(res_0, 0) - (A2_buf[0] * x3[-1] + A4_buf[0] * x3[1]);
+    }// 循环结束时 k==min_gk
+    assert(k == min_gk);
+    for ( ; k > min_nk; k -= NEON_LEN) {
+        float16x4x4_t A0_3_16;
+        float32x4_t tmp_0, res_0, irg_0;
+        float A2_buf[NEON_LEN], A4_buf[NEON_LEN];// 暂存 wgt*A2/A3 和 wgt*A4/A3
+        A0_3 -= NEON_LEN * 4;
+        A0_3_16 = vld4_f16(A0_3); __builtin_prefetch(A0_3 - NEON_LEN * 16, 0, 0);
+        A0_32_0 = vcvt_f32_f16(A0_3_16.val[0]);// A0
+        A1_32_0 = vcvt_f32_f16(A0_3_16.val[1]);// A1
+        A2_32_0 = vcvt_f32_f16(A0_3_16.val[2]);// A2
+        diag_32_0 = vcvt_f32_f16(A0_3_16.val[3]);// A3
+        diag_32_0 = vdivq_f32(vwgts, diag_32_0);
+        // 此时diag_32存的是w/A3
+        A2_32_0 = vmulq_f32(A2_32_0, diag_32_0);
+        vst1q_f32(A2_buf, A2_32_0);
+        // 注意这里载入的顺序
+        iR -= NEON_LEN; irg_0 = vld1q_f32(iR)  ; __builtin_prefetch(iR - NEON_LEN, 0);
+        b3 -= NEON_LEN; tmp_0 = vld1q_f32(b3)  ; __builtin_prefetch(b3 - NEON_LEN, 0);
+        x0 -= NEON_LEN; x0_32_0 = vld1q_f32(x0); __builtin_prefetch(x0 - NEON_LEN, 0);
+        x1 -= NEON_LEN; x1_32_0 = vld1q_f32(x1); __builtin_prefetch(x1 - NEON_LEN, 0);
+        tmp_0 = vmlsq_f32(tmp_0, A0_32_0 , x0_32_0); 
+        tmp_0 = vmlsq_f32(tmp_0, A1_32_0 , x1_32_0); 
+        // U半部分
+        A3_6 -= NEON_LEN * 4;
+        A0_3_16 = vld4_f16(A3_6); __builtin_prefetch(A3_6 - NEON_LEN * 16, 0, 0);
+        A2_32_0 = vcvt_f32_f16(A0_3_16.val[1]);// A4
+        A1_32_0 = vcvt_f32_f16(A0_3_16.val[2]);// A5
+        A0_32_0 = vcvt_f32_f16(A0_3_16.val[3]);// A6
+        A2_32_0 = vmulq_f32(A2_32_0, diag_32_0);
+        vst1q_f32(A4_buf, A2_32_0);
+
+        x5 -= NEON_LEN; x1_32_0 = vld1q_f32(x5); __builtin_prefetch(x5 - NEON_LEN, 0);// x5
+        x6 -= NEON_LEN; x0_32_0 = vld1q_f32(x6); __builtin_prefetch(x6 - NEON_LEN, 0);// x6
+        tmp_0 = vmlsq_f32(tmp_0, A1_32_0 , x1_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A0_32_0 , x0_32_0);// 此时tmp存的是b-非本柱的a*x
+        tmp_0 = vsubq_f32(tmp_0, irg_0);
+        x3 -= NEON_LEN; res_0 = vld1q_f32(x3); __builtin_prefetch(x3 - NEON_LEN, 1);
+        res_0 = vmulq_f32(res_0, vone_minus_wgts) ;
+        res_0 = vmlaq_f32(res_0, tmp_0, diag_32_0); // 此时res存的是(1-w)*x + w*(b-非本柱的a*x)
+        x3[3] = vgetq_lane_f32(res_0, 3) - (A2_buf[3] * x3[ 2] + A4_buf[3] * x3[4]);
+        x3[2] = vgetq_lane_f32(res_0, 2) - (A2_buf[2] * x3[ 1] + A4_buf[2] * x3[3]);
+        x3[1] = vgetq_lane_f32(res_0, 1) - (A2_buf[1] * x3[ 0] + A4_buf[1] * x3[2]);
+        x3[0] = vgetq_lane_f32(res_0, 0) - (A2_buf[0] * x3[-1] + A4_buf[0] * x3[1]);
+    }// 循环结束时 k==min_nk
+    assert(k == min_nk);
+    A0_3 -= 4; A3_6 -= 4;
+    x0 -= min_nk; x1 -= min_nk;
+    x3 -= min_nk;
+    x5 -= min_nk; x6 -= min_nk; b3 -= min_nk; iR -= min_nk;
+    for (k = min_nk - 1; k >= 0; k--) {
+        float diag_val = A0_3[3];
+        float tmp = 
+            + A0_3[0] * x0[k  ] + A0_3[1] * x1[k] + A0_3[2] * x3[k-1]
+            + A3_6[1] * x3[k+1] + A3_6[2] * x5[k] + A3_6[3] * x6[k  ];
+        tmp = b3[k] - tmp - iR[k];
         x3[k] *= (1.0 - weight);
         x3[k] += weight * tmp / diag_val;
         A0_3 -= 4; A3_6 -= 4;

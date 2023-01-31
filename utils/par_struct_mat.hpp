@@ -5,6 +5,13 @@
 #include "par_struct_vec.hpp"
 #include "operator.hpp"
 
+template<typename idx_t>
+struct irrgPts_mat
+{
+    idx_t gid;// 非规则点的全局索引
+    idx_t nnz, beg;// 每个非规则点的非零元和在ngb_ijk, _val中的起始位置
+};
+
 // data_t是矩阵数据存储的精度，calc_t是矩阵运算时的精度
 template<typename idx_t, typename data_t, typename calc_t>
 class par_structMatrix : public Operator<idx_t, data_t, calc_t>  {
@@ -28,6 +35,11 @@ public:
     StructCommPackage * comm_pkg = nullptr;
     bool own_comm_pkg = false;
 
+    idx_t num_irrgPts = 0;// 非规则点的数目
+    irrgPts_mat<idx_t> * irrgPts = nullptr;
+    idx_t * irrgPts_ngb_ijk = nullptr;
+    data_t * irrgPts_A_vals = nullptr;
+
     par_structMatrix(MPI_Comm comm, idx_t num_d, idx_t gx, idx_t gy, idx_t gz, idx_t num_proc_x, idx_t num_proc_y, idx_t num_proc_z);
     // 按照model的规格生成一个结构化向量，浅拷贝通信包
     par_structMatrix(const par_structMatrix & model);
@@ -36,10 +48,25 @@ public:
     void setup_cart_comm(MPI_Comm comm, idx_t px, idx_t py, idx_t pz, bool unblk);
     void setup_comm_pkg(bool need_corner=true);
 
+    void init_irrPts(const std::string pathname);
     void truncate() {
         int my_pid; MPI_Comm_rank(comm_pkg->cart_comm, &my_pid);
         if (my_pid == 0) printf("Warning: parMat truncated and sqrt_D to __fp16 (Consider to use f32 if effect bad!)\n");
         local_matrix->truncate();
+        // 非规则点也截断
+#ifdef __aarch64__
+        for (idx_t ir = 0; ir < num_irrgPts; ir++) {
+            idx_t pbeg = irrgPts[ir].beg, pend = pbeg + irrgPts[ir].nnz;
+            for (idx_t p = pbeg; p < pend; p++) {
+                __fp16  tmp0 = (__fp16) irrgPts_A_vals[p*2  ],
+                        tmp1 = (__fp16) irrgPts_A_vals[p*2+1];
+                irrgPts_A_vals[p*2  ] = (data_t) tmp0;
+                irrgPts_A_vals[p*2+1] = (data_t) tmp1;
+            }
+        }
+#else
+        printf("architecture not support truncated to fp16\n");
+#endif
         if (sqrt_D != nullptr) {
             const idx_t sqD_len = (sqrt_D->local_x + sqrt_D->halo_x * 2) * (sqrt_D->local_y + sqrt_D->halo_y * 2)
                                 * (sqrt_D->local_z + sqrt_D->halo_z * 2);
@@ -80,6 +107,8 @@ public:
     void set_boundary();
     void scale(const data_t scaled_diag);
     bool check_scaling(const data_t scaled_diag);
+    void copy_irrgPts(const par_structMatrix & src);
+    // void copy_irrgPts(const par_structMatrix<idx_t, calc_t, calc_t> & src);
     void write_CSR_bin(const std::string pathname) const;
     void write_struct_AOS_bin(const std::string pathname, const std::string file) const;
 };
@@ -119,14 +148,6 @@ par_structMatrix<idx_t, data_t, calc_t>::par_structMatrix(MPI_Comm comm, idx_t n
         stencil = stencil_offset_3d7;
         if constexpr (sizeof(data_t) != sizeof(calc_t)) SOA_spmv = SOA_spmv_3d7_Cal32Stg16;
         break;
-    case 19:
-        stencil = stencil_offset_3d19;
-        if constexpr (sizeof(data_t) != sizeof(calc_t)) SOA_spmv = SOA_spmv_3d19_Cal32Stg16;
-        break;
-    case 27:
-        stencil = stencil_offset_3d27;
-        if constexpr (sizeof(data_t) != sizeof(calc_t)) SOA_spmv = SOA_spmv_3d27_Cal32Stg16;
-        break;
     default:
         printf("not supported number of diagonals %d\n", num_diag);
         MPI_Abort(comm, -5577);
@@ -145,7 +166,63 @@ par_structMatrix<idx_t, data_t, calc_t>::par_structMatrix(const par_structMatrix
     own_comm_pkg = false;
     SOA_spmv = model.SOA_spmv;
     stencil = model.stencil;
+
+    copy_irrgPts(model);
 }
+
+template<typename idx_t, typename data_t, typename calc_t>
+void par_structMatrix<idx_t, data_t, calc_t>::copy_irrgPts(const par_structMatrix & src)
+{
+    if (src.num_irrgPts > 0) {
+        num_irrgPts = src.num_irrgPts;
+        irrgPts = new irrgPts_mat<idx_t> [num_irrgPts];
+        for (idx_t ir = 0; ir < num_irrgPts; ir++) 
+            irrgPts[ir] = src.irrgPts[ir];
+
+        const idx_t tot_nnz = irrgPts[num_irrgPts-1].beg + irrgPts[num_irrgPts-1].nnz;
+        irrgPts_ngb_ijk = new idx_t [tot_nnz * 3];// i j k
+        for (idx_t j = 0; j < tot_nnz * 3; j++)
+            irrgPts_ngb_ijk[j] = src.irrgPts_ngb_ijk[j];
+
+        irrgPts_A_vals = new data_t [tot_nnz * 2];// two-sided effect
+        for (idx_t j = 0; j < tot_nnz * 2; j++)
+            irrgPts_A_vals[j] = src.irrgPts_A_vals[j];
+    }
+    else {
+        if (num_irrgPts > 0) {
+            delete irrgPts; irrgPts = nullptr;
+            delete irrgPts_ngb_ijk; irrgPts_ngb_ijk = nullptr;
+            delete irrgPts_A_vals; irrgPts_A_vals = nullptr;
+        }
+        num_irrgPts = 0;
+    }
+}
+
+// template<typename idx_t, typename data_t, typename calc_t>
+// void par_structMatrix<idx_t, data_t, calc_t>::copy_irrgPts(const par_structMatrix<idx_t, calc_t, calc_t> & src)
+// {
+//     if (src.num_irrgPts > 0) {
+//         num_irrgPts = src.num_irrgPts;
+//         irrgPts = new irrgPts_mat<idx_t> [num_irrgPts];
+//         for (idx_t ir = 0; ir < num_irrgPts; ir++) 
+//             irrgPts[ir] = src.irrgPts[ir];
+//         const idx_t tot_nnz = irrgPts[num_irrgPts-1].beg + irrgPts[num_irrgPts-1].nnz;
+//         irrgPts_ngb_ijk = new idx_t [tot_nnz * 3];// i j k
+//         for (idx_t j = 0; j < tot_nnz * 3; j++)
+//             irrgPts_ngb_ijk[j] = src.irrgPts_ngb_ijk[j];
+//         irrgPts_A_vals = new data_t [tot_nnz * 2];// two-sided effect
+//         for (idx_t j = 0; j < tot_nnz * 2; j++)
+//             irrgPts_A_vals[j] = src.irrgPts_A_vals[j];
+//     }
+//     else {
+//         if (num_irrgPts > 0) {
+//             delete irrgPts; irrgPts = nullptr;
+//             delete irrgPts_ngb_ijk; irrgPts_ngb_ijk = nullptr;
+//             delete irrgPts_A_vals; irrgPts_A_vals = nullptr;
+//         }
+//         num_irrgPts = 0;
+//     }
+// }
 
 template<typename idx_t, typename data_t, typename calc_t>
 par_structMatrix<idx_t, data_t, calc_t>::~par_structMatrix()
@@ -166,6 +243,11 @@ par_structMatrix<idx_t, data_t, calc_t>::~par_structMatrix()
     if (scaled) {
         assert(sqrt_D != nullptr);
         delete sqrt_D; sqrt_D = nullptr;
+    }
+    if (num_irrgPts > 0) {
+        delete irrgPts; irrgPts = nullptr;
+        delete irrgPts_ngb_ijk; irrgPts_ngb_ijk = nullptr;
+        delete irrgPts_A_vals; irrgPts_A_vals = nullptr;
     }
 }
 
@@ -317,6 +399,94 @@ void par_structMatrix<idx_t, data_t, calc_t>::update_halo()
 }
 
 template<typename idx_t, typename data_t, typename calc_t>
+void par_structMatrix<idx_t, data_t, calc_t>::init_irrPts(const std::string pathname)
+{
+    int my_pid; MPI_Comm_rank(MPI_COMM_WORLD, &my_pid);
+
+    std::string filename = pathname + "/irgP_a";
+    FILE * fp = fopen(filename.c_str(), "r");
+    idx_t gid, nnz;
+    const idx_t lx = local_matrix->local_x, ly = local_matrix->local_y, lz = local_matrix->local_z;
+    std::vector<idx_t> irrGid, irrNNZ;
+    std::vector<std::tuple<idx_t,idx_t,idx_t> > irrNgbIJK;
+    std::vector<std::pair<data_t,data_t> > irrNgbVal;
+    while (fscanf(fp, "%d %d", &gid, &nnz) != EOF) {
+        idx_t lie_in_my_domain = 0;// 0 for undetermined, 1 for yes, -1 for no
+        idx_t i, j, k;
+        data_t my_row, other_row;
+        for (idx_t m = 0; m < nnz; m++) {
+            fscanf(fp, "%d %d %d %lf %lf", &i, &j, &k, &my_row, &other_row);
+            if (i == -1) {
+                assert(j == -1 && k == -1);
+                assert(lie_in_my_domain != 0);// 此前一定已经确定过了是否落在本进程范围内
+            } else {
+                if (lie_in_my_domain == 1) {
+                    // printf("%d %d %d", i, j, k);
+                    assert(offset_x <= i && i < offset_x + lx);
+                    assert(offset_y <= j && j < offset_y + ly);
+                    assert(offset_z <= k && k < offset_z + lz);
+                }
+                else if (lie_in_my_domain == 0) {
+                    if (offset_x <= i && i < offset_x + lx && 
+                        offset_y <= j && j < offset_y + ly &&
+                        offset_z <= k && k < offset_z + lz   )
+                        lie_in_my_domain =  1;// 落在本进程范围内
+                    else
+                        lie_in_my_domain = -1;
+                }
+            }
+
+            if (lie_in_my_domain == -1) continue;
+
+            irrNgbIJK.push_back(std::tuple<idx_t,idx_t,idx_t>(i, j, k));
+            irrNgbVal.push_back(std::pair<data_t, data_t>(my_row, other_row));
+        }
+
+        if (lie_in_my_domain == 1) {
+            irrGid.push_back(gid);
+            irrNNZ.push_back(nnz);
+        }
+    }
+    fclose(fp);
+
+    if (irrGid.size() > 0) {
+        num_irrgPts = irrGid.size();
+        irrgPts = new irrgPts_mat<idx_t> [num_irrgPts];
+        for (idx_t ir = 0; ir < num_irrgPts; ir++) {
+            irrgPts[ir].gid = irrGid[ir];
+            irrgPts[ir].nnz = irrNNZ[ir];
+            irrgPts[ir].beg = (ir == 0) ? 0 : (irrgPts[ir-1].beg + irrgPts[ir-1].nnz);
+        }
+        const idx_t tot_nnz = irrgPts[num_irrgPts-1].beg + irrgPts[num_irrgPts-1].nnz;
+// #ifdef DEBUG
+        printf(" proc %d got %ld irrgPts tot nnz %d\n", my_pid, irrGid.size(), tot_nnz);
+// #endif
+        irrgPts_ngb_ijk = new idx_t [tot_nnz * 3];// i j k
+        irrgPts_A_vals = new data_t [tot_nnz * 2];// two-sided effect
+        for (idx_t p = 0; p < tot_nnz; p++) {
+            irrgPts_ngb_ijk[p*3  ] = std::get<0>(irrNgbIJK[p]);
+            irrgPts_ngb_ijk[p*3+1] = std::get<1>(irrNgbIJK[p]);
+            irrgPts_ngb_ijk[p*3+2] = std::get<2>(irrNgbIJK[p]);
+            
+            irrgPts_A_vals [p*2  ] = irrNgbVal[p].first;
+            irrgPts_A_vals [p*2+1] = irrNgbVal[p].second;
+#ifdef DEBUG
+            printf("    (%d,%d,%d) %.7e %.7e\n", 
+                irrgPts_ngb_ijk[p*3  ], irrgPts_ngb_ijk[p*3+1], irrgPts_ngb_ijk[p*3+2],
+                irrgPts_A_vals [p*2  ], irrgPts_A_vals [p*2+1]);
+#endif
+        }
+
+        // 假定非规则点的对角元在最后一个
+        for (idx_t ir = 0; ir < num_irrgPts; ir++) {
+            idx_t last = irrgPts[ir].beg + irrgPts[ir].nnz - 1;
+            assert(irrgPts_ngb_ijk[last*3  ] == -1 && irrgPts_ngb_ijk[last*3+1] == -1
+                && irrgPts_ngb_ijk[last*3+2] == -1);
+        }
+    }
+}
+
+template<typename idx_t, typename data_t, typename calc_t>
 void par_structMatrix<idx_t, data_t, calc_t>::Mult(const par_structVector<idx_t, calc_t> & x, par_structVector<idx_t, calc_t> & y,
     bool use_zero_guess/* ignored */) const
 {
@@ -362,9 +532,52 @@ void par_structMatrix<idx_t, data_t, calc_t>::Mult(const par_structVector<idx_t,
     MPI_Allreduce(&t, &maxt, 1, MPI_DOUBLE, MPI_MAX, y.comm_pkg->cart_comm);
     MPI_Allreduce(&t, &mint, 1, MPI_DOUBLE, MPI_MIN, y.comm_pkg->cart_comm);
     // mint = maxt = t;
-    if (my_pid == 0) printf("SpMv data_t %ld calc_t %ld diag %d total %.2f GB time %.5f/%.5f s BW %.2f/%.2f GB/s\n",
+    if (my_pid == 0) printf("SpMv data %ld calc %ld d%d total %.2f GB time %.5f/%.5f s BW %.2f/%.2f GB/s\n",
                 sizeof(data_t), sizeof(calc_t), num_diag, bytes, mint, maxt, bytes/maxt, bytes/mint);
 #endif
+
+    // 非规则点的贡献// 前面的Mult()已经保证了三者的halo和local的宽度一致
+    const idx_t hx = local_matrix->halo_x , hy = local_matrix->halo_y , hz = local_matrix->halo_z ;
+    const idx_t lx = local_matrix->local_x, ly = local_matrix->local_y, lz = local_matrix->local_z;
+    const idx_t vec_ki_size = x.local_vector->slice_ki_size, vec_k_size = x.local_vector->slice_k_size;
+    assert(x.num_irrgPts == y.num_irrgPts && x.num_irrgPts == this->num_irrgPts);
+    // if (!(x.num_irrgPts == y.num_irrgPts && x.num_irrgPts == this->num_irrgPts)) {
+    //     int my_pid; MPI_Comm_rank(MPI_COMM_WORLD, &my_pid);
+    //     printf("proc %d Error !!! x %d y %d A %d\n", my_pid, x.num_irrgPts, y.num_irrgPts, this->num_irrgPts);
+    // }
+
+    for (idx_t ir = 0; ir < num_irrgPts; ir++) {
+        assert(x.irrgPts[ir].gid == y.irrgPts[ir].gid && x.irrgPts[ir].gid == this->irrgPts[ir].gid);
+        const idx_t pbeg = irrgPts[ir].beg, pend = pbeg + irrgPts[ir].nnz;
+        
+        calc_t res = 0.0;
+        for (idx_t p = pbeg; p < pend; p++) {// 遍历本非结构点的所有邻居
+            const idx_t ngb_i = irrgPts_ngb_ijk[p*3  ],
+                        ngb_j = irrgPts_ngb_ijk[p*3+1],
+                        ngb_k = irrgPts_ngb_ijk[p*3+2];// global coord
+            if (p == pend - 1) {// 对角元，受自己这个非规则点的影响
+                assert(ngb_i == -1 && ngb_j == -1 && ngb_k == -1);
+                assert(irrgPts_A_vals[p*2] == irrgPts_A_vals[p*2 + 1]);
+                res += irrgPts_A_vals[p*2] * x.irrgPts[ir].val;
+            } else {
+                assert(offset_x <= ngb_i && ngb_i < offset_x + lx);
+                // if (!(offset_x <= ngb_i && ngb_i < offset_x + lx)) {
+                //     printf("%")
+                // }
+                assert(offset_y <= ngb_j && ngb_j < offset_y + ly);
+                assert(offset_z <= ngb_k && ngb_k < offset_z + lz);
+                const idx_t loc_i = hx + ngb_i - offset_x,
+                            loc_j = hy + ngb_j - offset_y,
+                            loc_k = hz + ngb_k - offset_z;
+                idx_t loc_1D = loc_k + vec_k_size * loc_i + vec_ki_size * loc_j;
+                // 本非规则点受其它结构点的影响
+                res += irrgPts_A_vals[p*2] * x.local_vector->data[loc_1D];
+                // 其它结构点受本非规则点的影响
+                y.local_vector->data[loc_1D] += irrgPts_A_vals[p*2 + 1] * x.irrgPts[ir].val;
+            }
+        }
+        y.irrgPts[ir].val = res;
+    }
 }
 
 template<typename idx_t, typename data_t, typename calc_t>

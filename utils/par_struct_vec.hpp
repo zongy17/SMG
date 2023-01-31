@@ -6,6 +6,12 @@
 #include "seq_struct_mv.hpp"
 
 template<typename idx_t, typename data_t>
+struct irrgPts_vec {
+    idx_t gid;// global idx
+    data_t val;
+};
+
+template<typename idx_t, typename data_t>
 class par_structVector {
 public:
     idx_t global_size_x, global_size_y, global_size_z;// 全局方向的格点数
@@ -18,6 +24,9 @@ public:
     StructCommPackage * comm_pkg = nullptr;
     bool own_comm_pkg = false;
 
+    idx_t num_irrgPts = 0;// 非规则点的数目
+    irrgPts_vec<idx_t, data_t> * irrgPts = nullptr;
+
     par_structVector(MPI_Comm comm, idx_t gx, idx_t gy, idx_t gz, idx_t num_proc_x, idx_t num_proc_y, idx_t num_proc_z,
         bool need_corner);
     // 按照model的规格生成一个结构化向量，浅拷贝通信包
@@ -27,6 +36,7 @@ public:
     void setup_cart_comm(MPI_Comm comm, idx_t px, idx_t py, idx_t pz, bool unblk);
     void setup_comm_pkg(bool need_corner=false);
 
+    void init_irrgPts(idx_t num, const idx_t * gids, const char * filename=nullptr);
     void update_halo() const;
     void set_halo(data_t val) const;
     void set_val(data_t val, bool halo_set=false);
@@ -73,6 +83,14 @@ par_structVector<idx_t, data_t>::par_structVector(const par_structVector & model
     // 浅拷贝
     comm_pkg = model.comm_pkg;
     own_comm_pkg = false;
+    
+    if (model.num_irrgPts > 0) {
+        num_irrgPts = model.num_irrgPts;
+        irrgPts = new irrgPts_vec<idx_t, data_t> [num_irrgPts];
+        for (idx_t ir = 0; ir < num_irrgPts; ir++) {
+            irrgPts[ir] = model.irrgPts[ir];
+        }
+    }
 }
 
 template<typename idx_t, typename data_t>
@@ -83,6 +101,9 @@ par_structVector<idx_t, data_t>::~par_structVector()
     if (own_comm_pkg) {
         delete comm_pkg;
         comm_pkg = nullptr;
+    }
+    if (num_irrgPts > 0) {
+        delete irrgPts; irrgPts = nullptr;
     }   
 }
 
@@ -209,6 +230,44 @@ void par_structVector<idx_t, data_t>::setup_comm_pkg(bool need_corner)
 }
 
 template<typename idx_t, typename data_t>
+void par_structVector<idx_t, data_t>::init_irrgPts(idx_t num, const idx_t * gids, const char* filename)
+{
+    int my_pid; MPI_Comm_rank(MPI_COMM_WORLD, &my_pid);
+
+    num_irrgPts = num;
+    if (num_irrgPts > 0) {
+        if (irrgPts != nullptr) delete irrgPts;
+
+        irrgPts = new irrgPts_vec<idx_t, data_t> [num_irrgPts];
+        for (idx_t ir = 0; ir < num_irrgPts; ir++) {
+            irrgPts[ir].gid = gids[ir];
+            irrgPts[ir].val = 0.0;// init as 0
+        }
+        
+        if (filename != nullptr) {
+            FILE * fp = fopen(filename, "r");
+            idx_t id; double v;
+            
+            idx_t read_cnt = 0;
+            while (fscanf(fp, "%d %lf", &id, &v) != EOF) {
+                for (idx_t j = 0; j < num_irrgPts; j++) {
+                    if (irrgPts[j].gid == id) {
+                        irrgPts[j].val = v;
+                        read_cnt ++;
+                    }
+                }
+            }
+            fclose(fp);
+            assert(read_cnt == num_irrgPts);
+        }
+    }
+#ifdef DEBUG
+    for (idx_t i = 0; i < num_irrgPts; i++)
+        printf(" proc %d pt%d idx %d val %.10e\n", my_pid, i, irrgPts[i].gid, irrgPts[i].val);
+#endif
+}
+
+template<typename idx_t, typename data_t>
 void par_structVector<idx_t, data_t>::update_halo() const
 {
 #ifdef DEBUG
@@ -246,6 +305,10 @@ void par_structVector<idx_t, data_t>::set_val(const data_t val, bool halo_set) {
     else {// 只将内部的值设置 
         *(local_vector) = val;
     }
+
+    // 非规则点
+    for (idx_t ir = 0; ir < num_irrgPts; ir++)
+        irrgPts[ir].val = val;
 }
 
 template<typename idx_t, typename data_t>
@@ -419,6 +482,13 @@ res_t vec_dot(par_structVector<idx_t, data_t> const & x, par_structVector<idx_t,
     res_t loc_prod, glb_prod;
     loc_prod = seq_vec_dot<idx_t, data_t, res_t>(*(x.local_vector), *(y.local_vector));
 
+    // 累计上本进程内部的非规则点
+    assert(x.num_irrgPts == y.num_irrgPts);
+    for (idx_t ir = 0; ir < x.num_irrgPts; ir++) {
+        assert(x.irrgPts[ir].gid == y.irrgPts[ir].gid);
+        loc_prod += x.irrgPts[ir].val * y.irrgPts[ir].val;
+    }
+
 #ifdef DEBUG
     printf("proc %3d halo_x/y/z %d %d %d local_x/y/z %d %d %d loc_proc %10.7e\n", 
         x.comm_pkg->my_pid,
@@ -443,6 +513,13 @@ void vec_add(const par_structVector<idx_t, data_t> & v1, scalar_t alpha,
     CHECK_VEC_GLOBAL(v1, v2);
 
     seq_vec_add(*(v1.local_vector), alpha, *(v2.local_vector), *(v.local_vector));    
+
+    // 非规则点
+    assert(v1.num_irrgPts == v2.num_irrgPts && v1.num_irrgPts == v.num_irrgPts);
+    for (idx_t ir = 0; ir < v1.num_irrgPts; ir++) {
+        assert(v1.irrgPts[ir].gid == v2.irrgPts[ir].gid && v1.irrgPts[ir].gid == v.irrgPts[ir].gid);
+        v.irrgPts[ir].val = v1.irrgPts[ir].val + alpha * v2.irrgPts[ir].val;
+    }
 }
 
 
@@ -453,6 +530,13 @@ void vec_copy(const par_structVector<idx_t, data_t> & src, par_structVector<idx_
     CHECK_VEC_GLOBAL(src, dst);
 
     seq_vec_copy(*(src.local_vector), *(dst.local_vector));
+
+    // 非规则点
+    assert(src.num_irrgPts == dst.num_irrgPts);
+    for (idx_t ir = 0; ir < src.num_irrgPts; ir++) {
+        assert(src.irrgPts[ir].gid == dst.irrgPts[ir].gid);
+        dst.irrgPts[ir].val = src.irrgPts[ir].val;
+    }
 }
 
 // coeff * src -> dst
@@ -461,12 +545,23 @@ void vec_mul_by_scalar(const scalar_t coeff, const par_structVector<idx_t, data_
     CHECK_VEC_GLOBAL(src, dst);
 
     seq_vec_mul_by_scalar(coeff, *(src.local_vector), *(dst.local_vector));
+
+    // 非规则点
+    assert(src.num_irrgPts == dst.num_irrgPts);
+    for (idx_t ir = 0; ir < src.num_irrgPts; ir++) {
+        assert(src.irrgPts[ir].gid == dst.irrgPts[ir].gid);
+        dst.irrgPts[ir].val = coeff * src.irrgPts[ir].val;
+    }
 }
 
 // vec *= coeff
 template<typename idx_t, typename data_t, typename scalar_t>
 void vec_scale(const scalar_t coeff, par_structVector<idx_t, data_t> & vec) {
     seq_vec_scale(coeff, *(vec.local_vector));
+
+    // 非规则点
+    for (idx_t ir = 0; ir < vec.num_irrgPts; ir++)
+        vec.irrgPts[ir].val *= coeff;
 }
 
 #endif

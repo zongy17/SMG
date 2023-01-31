@@ -4,6 +4,28 @@
 #include "precond.hpp"
 #include "../utils/par_struct_mat.hpp"
 
+template<typename idx_t, typename data_t>
+struct IrrgPts_Effect
+{
+    idx_t loc_id;// local idx to access irrgPts_vec array
+    idx_t i, j, k;// 该非规则点所影响的结构点的三维全局坐标
+    data_t val;// 影响的值
+    IrrgPts_Effect() {}
+    IrrgPts_Effect(idx_t ir, idx_t i, idx_t j, idx_t k, data_t v): loc_id(ir), i(i), j(j), k(k), val(v) {}
+    bool operator < (const IrrgPts_Effect & b) const {
+        if (j < b.j) return true;
+        else if (j > b.j) return false;
+        else {// j == b.j
+            if (i < b.i) return true;
+            else if (i > b.i) return false;
+            else {// i == b.i
+                assert(k != b.k);
+                return k < b.k;
+            }
+        }
+    }
+};
+
 // data_t是数据存储的精度，calc_t是算子作用时的精度（对应向量的精度）
 template<typename idx_t, typename data_t, typename calc_t>
 class PointGS : public Solver<idx_t, data_t, calc_t> {
@@ -28,6 +50,11 @@ public:
     // AOS => SOA
     void separate_Diags();
 
+    // 将A矩阵内的非规则点对结构点的影响提取出来，并按照自然序排序，以便在做结构点
+    void prepare_irrgPts();
+    idx_t num_irrgPts_effect = 0;
+    IrrgPts_Effect<idx_t, data_t> * irrg_to_Struct = nullptr;// 局部非规则点的一维序号，对应结构点的三维坐标（已带偏移），本结构点受非结构点的影响
+
     void (*AOS_forward_zero)
         (const idx_t, const idx_t, const idx_t, const data_t, const data_t*, const data_t*, const calc_t*, calc_t*, const calc_t*) = nullptr;
     void (*AOS_forward_ALL)
@@ -36,15 +63,14 @@ public:
         (const idx_t, const idx_t, const idx_t, const data_t, const data_t*, const data_t*, const calc_t*, calc_t*, const calc_t*) = nullptr;
     void (*AOS_backward_ALL)
         (const idx_t, const idx_t, const idx_t, const data_t, const data_t*, const data_t*, const calc_t*, calc_t*, const calc_t*) = nullptr;
-    // scaled 的情形
-    void (*AOS_forward_zero_scaled)
-        (const idx_t, const idx_t, const idx_t, const data_t, const data_t*, const data_t*, const calc_t*, calc_t*, const calc_t*) = nullptr;
-    void (*AOS_forward_ALL_scaled)
-        (const idx_t, const idx_t, const idx_t, const data_t, const data_t*, const data_t*, const calc_t*, calc_t*, const calc_t*) = nullptr;
-    void (*AOS_backward_zero_scaled)
-        (const idx_t, const idx_t, const idx_t, const data_t, const data_t*, const data_t*, const calc_t*, calc_t*, const calc_t*) = nullptr;
-    void (*AOS_backward_ALL_scaled)
-        (const idx_t, const idx_t, const idx_t, const data_t, const data_t*, const data_t*, const calc_t*, calc_t*, const calc_t*) = nullptr;
+    void (*AOS_forward_zero_irr) (const idx_t, const idx_t, const idx_t, const data_t,
+        const data_t*, const data_t*, const calc_t*, calc_t*, const calc_t*, const idx_t /* which k */, const calc_t /* contrib to this k */) = nullptr;
+    void (*AOS_forward_ALL_irr) (const idx_t, const idx_t, const idx_t, const data_t,
+        const data_t*, const data_t*, const calc_t*, calc_t*, const calc_t*, const idx_t /* which k */, const calc_t /* contrib to this k */) = nullptr;
+    void (*AOS_backward_zero_irr) (const idx_t, const idx_t, const idx_t, const data_t,
+        const data_t*, const data_t*, const calc_t*, calc_t*, const calc_t*, const idx_t /* which k */, const calc_t /* contrib to this k */) = nullptr;
+    void (*AOS_backward_ALL_irr) (const idx_t, const idx_t, const idx_t, const data_t,
+        const data_t*, const data_t*, const calc_t*, calc_t*, const calc_t*, const idx_t /* which k */, const calc_t /* contrib to this k */) = nullptr;
 
     void (*SOA_forward_zero)
         (const idx_t, const idx_t, const idx_t, const calc_t, const data_t**, const calc_t*, calc_t*, const calc_t*) = nullptr;
@@ -54,15 +80,14 @@ public:
         (const idx_t, const idx_t, const idx_t, const calc_t, const data_t**, const calc_t*, calc_t*, const calc_t*) = nullptr;
     void (*SOA_backward_ALL)
         (const idx_t, const idx_t, const idx_t, const calc_t, const data_t**, const calc_t*, calc_t*, const calc_t*) = nullptr;
-    // scaled 的情形
-    void (*SOA_forward_zero_scaled)
-        (const idx_t, const idx_t, const idx_t, const calc_t, const data_t**, const calc_t*, calc_t*, const calc_t*) = nullptr;
-    void (*SOA_forward_ALL_scaled)
-        (const idx_t, const idx_t, const idx_t, const calc_t, const data_t**, const calc_t*, calc_t*, const calc_t*) = nullptr;
-    void (*SOA_backward_zero_scaled)
-        (const idx_t, const idx_t, const idx_t, const calc_t, const data_t**, const calc_t*, calc_t*, const calc_t*) = nullptr;
-    void (*SOA_backward_ALL_scaled)
-        (const idx_t, const idx_t, const idx_t, const calc_t, const data_t**, const calc_t*, calc_t*, const calc_t*) = nullptr;
+    void (*SOA_forward_zero_irr)
+        (const idx_t, const idx_t, const idx_t, const calc_t, const data_t**, const calc_t*, calc_t*, const calc_t*, const calc_t*) = nullptr;
+    void (*SOA_forward_ALL_irr)
+        (const idx_t, const idx_t, const idx_t, const calc_t, const data_t**, const calc_t*, calc_t*, const calc_t*, const calc_t*) = nullptr;
+    void (*SOA_backward_zero_irr)
+        (const idx_t, const idx_t, const idx_t, const calc_t, const data_t**, const calc_t*, calc_t*, const calc_t*, const calc_t*) = nullptr;
+    void (*SOA_backward_ALL_irr)
+        (const idx_t, const idx_t, const idx_t, const calc_t, const data_t**, const calc_t*, calc_t*, const calc_t*, const calc_t*) = nullptr;
 
     PointGS() : Solver<idx_t, data_t, calc_t>() {  }
     PointGS(SCAN_TYPE type) : Solver<idx_t, data_t, calc_t>(), scan_type(type) {
@@ -82,36 +107,28 @@ public:
         this->output_dim[2] = op.output_dim[2];
 
         const idx_t num_diag = ((const par_structMatrix<idx_t, calc_t, calc_t>&)op).num_diag;
-        if constexpr (sizeof(calc_t) != sizeof(data_t) && sizeof(data_t) == 2 && sizeof(calc_t) == 4) {
-            // 单-半精度混合计算
-            assert(sizeof(data_t) < sizeof(calc_t));
+        if constexpr (sizeof(calc_t) != sizeof(data_t)) {
             separate_Diags();
-            switch (num_diag)
-            {
-            case 7:
-                SOA_forward_zero = SOA_point_forward_zero_3d7_Cal32Stg16;
-                SOA_forward_ALL  = SOA_point_forward_ALL_3d7_Cal32Stg16;
-                SOA_backward_zero= nullptr;// 没必要实现，实际不会用到
-                SOA_backward_ALL = SOA_point_backward_ALL_3d7_Cal32Stg16;
-                SOA_forward_zero_scaled = SOA_point_forward_zero_3d7_Cal32Stg16_scaled;
-                SOA_forward_ALL_scaled  = SOA_point_forward_ALL_3d7_Cal32Stg16_scaled;
-                SOA_backward_zero_scaled= nullptr;
-                SOA_backward_ALL_scaled = SOA_point_backward_ALL_3d7_Cal32Stg16_scaled;
-                break;
-            case 19:
-                SOA_forward_zero = SOA_point_forward_zero_3d19_Cal32Stg16;
-                SOA_forward_ALL  = SOA_point_forward_ALL_3d19_Cal32Stg16;
-                SOA_backward_zero= nullptr;
-                SOA_backward_ALL = SOA_point_backward_ALL_3d19_Cal32Stg16;
-                break;
-            case 27:
-                SOA_forward_zero = SOA_point_forward_zero_3d27_Cal32Stg16;
-                SOA_forward_ALL  = SOA_point_forward_ALL_3d27_Cal32Stg16;
-                SOA_backward_zero= nullptr;
-                SOA_backward_ALL = SOA_point_backward_ALL_3d27_Cal32Stg16;
-                break;
-            default:
-                MPI_Abort(MPI_COMM_WORLD, -10202);
+            static_assert(sizeof(data_t) < sizeof(calc_t));
+            if constexpr (sizeof(data_t) == 2 && sizeof(calc_t) == 4) {// 单-半精度混合计算
+                switch (num_diag)
+                {
+                case 7:
+                    SOA_forward_zero = SOA_point_forward_zero_3d7_Cal32Stg16;
+                    SOA_forward_ALL  = SOA_point_forward_ALL_3d7_Cal32Stg16;
+                    SOA_backward_zero= nullptr;// 没必要实现，实际不会用到
+                    SOA_backward_ALL = SOA_point_backward_ALL_3d7_Cal32Stg16;
+                    SOA_forward_zero_irr = SOA_point_forward_zero_3d7_Cal32Stg16_irr;
+                    SOA_forward_ALL_irr  = SOA_point_forward_ALL_3d7_Cal32Stg16_irr;
+                    SOA_backward_zero_irr= nullptr;
+                    SOA_backward_ALL_irr = SOA_point_backward_ALL_3d7_Cal32Stg16_irr;
+                    break;
+                default:
+                    MPI_Abort(MPI_COMM_WORLD, -10202);
+                }
+            }
+            else {// 双-半精度混合
+                assert(false);
             }
         }
         else {// 纯单一精度或者双-单混合
@@ -123,27 +140,16 @@ public:
                 AOS_forward_ALL         = AOS_point_forward_ALL_3d7<idx_t, data_t, calc_t>;
                 AOS_backward_zero       = AOS_point_backward_zero_3d7<idx_t, data_t, calc_t>;
                 AOS_backward_ALL        = AOS_point_backward_ALL_3d7<idx_t, data_t, calc_t>;
-                AOS_forward_zero_scaled = AOS_point_forward_zero_3d7_scaled<idx_t, data_t, calc_t>;
-                AOS_forward_ALL_scaled  = AOS_point_forward_ALL_3d7_scaled<idx_t, data_t, calc_t>;
-                AOS_backward_zero_scaled= AOS_point_backward_zero_3d7_scaled<idx_t, data_t, calc_t>;
-                AOS_backward_ALL_scaled = AOS_point_backward_ALL_3d7_scaled<idx_t, data_t, calc_t>;
-                break;
-            case 19:
-                AOS_forward_zero        = AOS_point_forward_zero_3d19<idx_t, data_t, calc_t>;
-                AOS_forward_ALL         = AOS_point_forward_ALL_3d19<idx_t, data_t, calc_t>;
-                AOS_backward_zero       = AOS_point_backward_zero_3d19<idx_t, data_t, calc_t>;
-                AOS_backward_ALL        = AOS_point_backward_ALL_3d19<idx_t, data_t, calc_t>;
-                break;
-            case 27:
-                AOS_forward_zero        = AOS_point_forward_zero_3d27<idx_t, data_t, calc_t>;
-                AOS_forward_ALL         = AOS_point_forward_ALL_3d27<idx_t, data_t, calc_t>;
-                AOS_backward_zero       = AOS_point_backward_zero_3d27<idx_t, data_t, calc_t>;
-                AOS_backward_ALL        = AOS_point_backward_ALL_3d27<idx_t, data_t, calc_t>;
+                AOS_forward_zero_irr    = AOS_point_forward_zero_3d7_irr<idx_t, data_t, calc_t>;
+                AOS_forward_ALL_irr     = AOS_point_forward_ALL_3d7_irr<idx_t, data_t, calc_t>;
+                AOS_backward_zero_irr   = AOS_point_backward_zero_3d7_irr<idx_t, data_t, calc_t>;
+                AOS_backward_ALL_irr    = AOS_point_backward_ALL_3d7_irr<idx_t, data_t, calc_t>;
                 break;
             default:
                 MPI_Abort(MPI_COMM_WORLD, -10200);
             }
         }
+        prepare_irrgPts();
     }
 
     virtual void SetScanType(SCAN_TYPE type) {scan_type = type;}
@@ -194,6 +200,58 @@ PointGS<idx_t, data_t, calc_t>::~PointGS() {
             DiagGroups[id] = nullptr;
         }
         delete [] DiagGroups; DiagGroups = nullptr;
+    }
+}
+
+template<typename idx_t, typename data_t, typename calc_t>
+void PointGS<idx_t, data_t, calc_t>::prepare_irrgPts()
+{
+    const par_structMatrix<idx_t, calc_t, calc_t> & par_A = *((par_structMatrix<idx_t, calc_t, calc_t> *)(this->oper));
+    if (num_irrgPts_effect != 0)
+        delete irrg_to_Struct;
+
+    std::vector<IrrgPts_Effect<idx_t,data_t> > container;
+    for (idx_t ir = 0; ir < par_A.num_irrgPts; ir++) {
+        idx_t pbeg = par_A.irrgPts[ir].beg, pend = pbeg + par_A.irrgPts[ir].nnz;
+        for (idx_t p = pbeg; p < pend; p++) {
+            if (par_A.irrgPts_ngb_ijk[p*3] != -1) {
+                idx_t loc_i = par_A.irrgPts_ngb_ijk[p*3  ] - par_A.offset_x + par_A.local_matrix->halo_x;
+                idx_t loc_j = par_A.irrgPts_ngb_ijk[p*3+1] - par_A.offset_y + par_A.local_matrix->halo_y;
+                idx_t loc_k = par_A.irrgPts_ngb_ijk[p*3+2] - par_A.offset_z + par_A.local_matrix->halo_z;
+                data_t val = par_A.irrgPts_A_vals[p*2+1];
+                IrrgPts_Effect<idx_t, data_t> obj(ir, loc_i, loc_j, loc_k, val);
+                container.push_back(obj);
+            }
+        }
+    }
+    std::sort(container.begin(), container.end());
+    // check sorted
+    num_irrgPts_effect = container.size();
+    for (idx_t i = 0; i < num_irrgPts_effect - 1; i++) {
+        idx_t curr_i = container[i].i;
+        idx_t curr_j = container[i].j;
+        idx_t curr_k = container[i].k;
+        idx_t next_i = container[i+1].i;
+        idx_t next_j = container[i+1].j;
+        idx_t next_k = container[i+1].k;
+#ifdef DISABLE_OMP
+        assert(curr_j < next_j || (curr_j==next_j && curr_i < next_i) || (curr_j==next_j && curr_i==next_i && curr_k < next_k));
+#else
+        // 取巧的写法：因为特别地，在做level-based的并行sptrsv时，
+        // 每个level内都只有一个点会被非规则点影响，且这些点的(x,z)坐标都相同
+        assert(curr_i == next_i && curr_k == next_k);
+        assert(curr_j < next_j);
+#endif
+    }
+    // Copy
+    irrg_to_Struct = new IrrgPts_Effect<idx_t,data_t> [num_irrgPts_effect];
+    int my_pid; MPI_Comm_rank(MPI_COMM_WORLD, &my_pid);
+    for (idx_t i = 0; i < num_irrgPts_effect; i++) {
+        irrg_to_Struct[i] = container[i];
+#ifdef DEBUG
+        printf(" proc %d locally %d => (%d,%d,%d) of %lf\n", 
+            my_pid, container[i].loc_id, container[i].i, container[i].j, container[i].k, container[i].val);
+#endif
     }
 }
 
@@ -340,15 +398,50 @@ void PointGS<idx_t, data_t, calc_t>::AOS_ForwardPass(const par_structVector<idx_
     const idx_t slice_dki_size = L->slice_dki_size, slice_dk_size = L->slice_dk_size, num_diag = L->num_diag;
     void (*kernel) (const idx_t, const idx_t, const idx_t, const data_t, 
                     const data_t*, const data_t*, const calc_t*, calc_t*, const calc_t*) = nullptr;
-    
+    void (*kernel_irr) (const idx_t, const idx_t, const idx_t, const data_t,
+                    const data_t*, const data_t*, const calc_t*, calc_t*, const calc_t*,
+                    const idx_t /* which k */, const calc_t /* contrib to this k */) = nullptr;
     const bool & scaled = par_A->scaled;
     const calc_t * sqD_data = scaled ? par_A->sqrt_D->data : nullptr;
     if (this->zero_guess) {
-        kernel = scaled ? AOS_forward_zero_scaled : AOS_forward_zero;
+        kernel = scaled ? nullptr : AOS_forward_zero;
+        kernel_irr = scaled ? nullptr : AOS_forward_zero_irr;
     } else {
-        kernel = scaled ? AOS_forward_ALL_scaled : AOS_forward_ALL;
+        kernel = scaled ? nullptr : AOS_forward_ALL;
+        kernel_irr = scaled ? nullptr : AOS_forward_ALL_irr;
     }
     assert(kernel);
+    assert(kernel_irr);
+
+    // 前扫先处理非规则点
+    for (idx_t ir = 0; ir < par_A->num_irrgPts; ir++) {
+        assert(par_A->irrgPts[ir].gid == x.irrgPts[ir].gid && x.irrgPts[ir].gid == b.irrgPts[ir].gid);
+        const idx_t pbeg = par_A->irrgPts[ir].beg, pend = pbeg + par_A->irrgPts[ir].nnz;
+        calc_t tmp = 0.0;
+        assert(par_A->irrgPts_ngb_ijk[(pend-1)*3] == -1);
+        calc_t diag_val = par_A->irrgPts_A_vals[(pend-1)<<1];
+        #pragma omp parallel for schedule(static) reduction(+:tmp)
+        for (idx_t p = pbeg; p < pend - 1; p++) {// 跳过了对角元
+            const idx_t ngb_i = par_A->irrgPts_ngb_ijk[p*3  ],
+                        ngb_j = par_A->irrgPts_ngb_ijk[p*3+1],
+                        ngb_k = par_A->irrgPts_ngb_ijk[p*3+2];// global coord
+            const idx_t i = ibeg + ngb_i - par_A->offset_x,
+                        j = jbeg + ngb_j - par_A->offset_y,
+                        k = kbeg + ngb_k - par_A->offset_z;
+            tmp += par_A->irrgPts_A_vals[p<<1] * x_data[k + i * vec_k_size + j * vec_ki_size];
+        }
+        tmp = b.irrgPts[ir].val - tmp;
+        x.irrgPts[ir].val *= (1.0 - weight);
+        x.irrgPts[ir].val += weight * tmp / diag_val;
+    }
+
+    // 再处理结构点：边遍历三维向量边检查是否碰到非规则的邻居
+    idx_t ptr = 0, irr_ngb_i = -1, irr_ngb_j = -1, irr_ngb_k = -1;
+    bool need_to_check = ptr < num_irrgPts_effect;
+    // printf(" proc %d got %d need_to %d\n", my_pid, num_irrgPts_effect, need_to_check);
+    if (need_to_check) {
+        irr_ngb_i = irrg_to_Struct[ptr].i;  irr_ngb_j = irrg_to_Struct[ptr].j;  irr_ngb_k = irrg_to_Struct[ptr].k;
+    }
 
     if (num_threads > 1) {// level-based的多线程并行
         // level是等值线 slope * j + i = Const, 对于3d7和3d15 斜率为1, 对于3d19和3d27 斜率为2
@@ -382,6 +475,7 @@ void PointGS<idx_t, data_t, calc_t>::AOS_ForwardPass(const par_structVector<idx_
                     idx_t j_lev = jstart_lev - it;
 					idx_t i_lev = istart_lev + it * slope;
                     idx_t j = jbeg + j_lev, i = ibeg + i_lev;// 用于数组选址计算的下标
+                    bool task_check = need_to_check && j == irr_ngb_j && i == irr_ngb_i;
                     idx_t i_to_wait = (i == iend - 1) ? i_lev : (i_lev + wait_offi);
                     const idx_t mat_off = j * slice_dki_size + i * slice_dk_size + kbeg * num_diag;
                     const idx_t vec_off = j * vec_ki_size    + i * vec_k_size    + kbeg;
@@ -393,25 +487,56 @@ void PointGS<idx_t, data_t, calc_t>::AOS_ForwardPass(const par_structVector<idx_
                     if (it == t_beg) while ( __atomic_load_n(&flag[j_lev+1], __ATOMIC_ACQUIRE) < i_lev - 1) {  } // 只需检查W依赖
                     if (it == t_end - 1) while (__atomic_load_n(&flag[j_lev  ], __ATOMIC_ACQUIRE) < i_to_wait) {  }
                     
-                    // 中间的不需等待
-                    kernel(col_height, vec_k_size, vec_ki_size, weight, L_jik, U_jik, b_jik, x_jik, sqD_jik);
+                    if (task_check) {
+                        idx_t ir = irrg_to_Struct[ptr].loc_id;
+                        assert(par_A->irrgPts[ir].gid == x.irrgPts[ir].gid);// 确保是同一个非规则点
+                        const calc_t contrib = irrg_to_Struct[ptr].val * x.irrgPts[ir].val;// 非规则点对该柱中某个点的影响值
+
+                        kernel_irr(col_height, vec_k_size, vec_ki_size, weight, L_jik, U_jik, b_jik, x_jik, sqD_jik, irr_ngb_k - kbeg, contrib);
+
+                        need_to_check = (++ptr) < num_irrgPts_effect;
+                        if (need_to_check) {
+                            assert(irr_ngb_i == irrg_to_Struct[ptr].i);
+                            assert(irr_ngb_k == irrg_to_Struct[ptr].k);
+                            irr_ngb_j = irrg_to_Struct[ptr].j;
+                        }
+                    } else {
+                        kernel(col_height, vec_k_size, vec_ki_size, weight, L_jik, U_jik, b_jik, x_jik, sqD_jik);
+                    }
 
                     if (it == t_beg || it == t_end - 1) __atomic_store_n(&flag[j_lev+1], i_lev, __ATOMIC_RELEASE);
                     else flag[j_lev+1] = i_lev;
                 }
+                #pragma omp barrier // sync for ptr,need_to_check,irr_ngb_j when each lev done
             }
         }
     }
     else {
         for (idx_t j = jbeg; j < jend; j++)
         for (idx_t i = ibeg; i < iend; i++) {
+            bool task_check = need_to_check && j == irr_ngb_j && i == irr_ngb_i;
             const idx_t mat_off = j * slice_dki_size + i * slice_dk_size + kbeg * num_diag;
             const idx_t vec_off = j * vec_ki_size    + i * vec_k_size    + kbeg;
             const data_t * L_jik = L_data + mat_off, * U_jik = U_data + mat_off;
             const calc_t * sqD_jik = scaled ? (sqD_data + vec_off) : nullptr;
             calc_t * x_jik = x_data + vec_off;
             const calc_t * b_jik = b_data + vec_off;
-            kernel(col_height, vec_k_size, vec_ki_size, weight, L_jik, U_jik, b_jik, x_jik, sqD_jik);
+            if (task_check) {
+                idx_t ir = irrg_to_Struct[ptr].loc_id;
+                assert(par_A->irrgPts[ir].gid == x.irrgPts[ir].gid);// 确保是同一个非规则点
+                const calc_t contrib = irrg_to_Struct[ptr].val * x.irrgPts[ir].val;// 非规则点对该柱中某个点的影响值
+
+                kernel_irr(col_height, vec_k_size, vec_ki_size, weight, L_jik, U_jik, b_jik, x_jik, sqD_jik, irr_ngb_k - kbeg, contrib);
+
+                need_to_check = (++ptr) < num_irrgPts_effect;
+                if (need_to_check) {
+                    assert(irr_ngb_i == irrg_to_Struct[ptr].i);
+                    assert(irr_ngb_k == irrg_to_Struct[ptr].k);
+                    irr_ngb_j = irrg_to_Struct[ptr].j;
+                }
+            } else {
+                kernel(col_height, vec_k_size, vec_ki_size, weight, L_jik, U_jik, b_jik, x_jik, sqD_jik);
+            }
         }
     }
 }
@@ -440,15 +565,27 @@ void PointGS<idx_t, data_t, calc_t>::AOS_BackwardPass(const par_structVector<idx
     const idx_t slice_dki_size = L->slice_dki_size, slice_dk_size = L->slice_dk_size, num_diag = L->num_diag;
     void (*kernel) (const idx_t, const idx_t, const idx_t, const data_t, 
                     const data_t*, const data_t*, const calc_t*, calc_t*, const calc_t*) = nullptr;
-    
+    void (*kernel_irr) (const idx_t, const idx_t, const idx_t, const data_t,
+                    const data_t*, const data_t*, const calc_t*, calc_t*, const calc_t*,
+                    const idx_t /* which k */, const calc_t /* contrib to this k */) = nullptr;
     const bool & scaled = par_A->scaled;
     const calc_t * sqD_data = scaled ? par_A->sqrt_D->data : nullptr;
     if (this->zero_guess) {
-        kernel = scaled ? AOS_backward_zero_scaled : AOS_backward_zero;
+        kernel = scaled ? nullptr : AOS_backward_zero;
+        kernel_irr = scaled ? nullptr : AOS_backward_zero_irr;
     } else {
-        kernel = scaled ? AOS_backward_ALL_scaled : AOS_backward_ALL;
+        kernel = scaled ? nullptr : AOS_backward_ALL;
+        kernel_irr = scaled ? nullptr : AOS_backward_ALL_irr;
     }
     assert(kernel);
+    assert(kernel_irr);
+
+    // 后扫先处理结构点
+    idx_t ptr = num_irrgPts_effect - 1, irr_ngb_i = -1, irr_ngb_j = -1, irr_ngb_k = -1;
+    bool need_to_check = ptr >= 0;
+    if (need_to_check) {
+        irr_ngb_i = irrg_to_Struct[ptr].i;  irr_ngb_j = irrg_to_Struct[ptr].j;  irr_ngb_k = irrg_to_Struct[ptr].k;
+    }
 
     if (num_threads > 1) {// level-based的多线程并行
         const idx_t slope = (par_A->num_diag == 7 || par_A->num_diag == 15) ? 1 : 2;
@@ -481,6 +618,7 @@ void PointGS<idx_t, data_t, calc_t>::AOS_BackwardPass(const par_structVector<idx
                     idx_t j_lev = jstart_lev - it;
 					idx_t i_lev = istart_lev + it * slope;
                     idx_t j = jbeg + j_lev, i = ibeg + i_lev;// 用于数组选址计算的下标
+                    bool task_check = need_to_check && j == irr_ngb_j && i == irr_ngb_i;
                     idx_t i_to_wait = (i == ibeg) ? i_lev : (i_lev + wait_offi);
                     const idx_t mat_off = j * slice_dki_size + i * slice_dk_size + (kend - 1) * num_diag;
                     const idx_t vec_off = j * vec_ki_size + i * vec_k_size + (kend - 1);
@@ -492,24 +630,80 @@ void PointGS<idx_t, data_t, calc_t>::AOS_BackwardPass(const par_structVector<idx
                     if (it == t_beg) while ( __atomic_load_n(&flag[j_lev+1], __ATOMIC_ACQUIRE) > i_to_wait) {  }
                     if (it == t_end - 1) while (__atomic_load_n(&flag[j_lev  ], __ATOMIC_ACQUIRE) > i_lev + 1) {  }
                     // 中间的不需等待
-                    kernel(col_height, vec_k_size, vec_ki_size, weight, L_jik, U_jik, b_jik, x_jik, sqD_jik);
+                    if (task_check) {
+                        idx_t ir = irrg_to_Struct[ptr].loc_id;
+                        assert(par_A->irrgPts[ir].gid == x.irrgPts[ir].gid);// 确保是同一个非规则点
+                        const calc_t contrib = irrg_to_Struct[ptr].val * x.irrgPts[ir].val;// 非规则点对该柱中某个点的影响值
+
+                        kernel_irr(col_height, vec_k_size, vec_ki_size, weight, L_jik, U_jik, b_jik, x_jik, sqD_jik, irr_ngb_k - (kend - 1), contrib);
+
+                        need_to_check = (--ptr) >= 0;
+                        if (need_to_check) {
+                            assert(irr_ngb_i == irrg_to_Struct[ptr].i);
+                            assert(irr_ngb_k == irrg_to_Struct[ptr].k);
+                            irr_ngb_j = irrg_to_Struct[ptr].j;
+                        }
+                    } else {
+                        kernel(col_height, vec_k_size, vec_ki_size, weight, L_jik, U_jik, b_jik, x_jik, sqD_jik);
+                    }
+                    
                     if (it == t_beg || it == t_end - 1) __atomic_store_n(&flag[j_lev], i_lev, __ATOMIC_RELEASE);
                     else flag[j_lev] = i_lev;
                 }
+                #pragma omp barrier // sync for ptr,need_to_check,irr_ngb_j when each lev done
             }
         }
     }
     else {
         for (idx_t j = jend - 1; j >= jbeg; j--)
         for (idx_t i = iend - 1; i >= ibeg; i--) {
+            bool task_check = need_to_check && j == irr_ngb_j && i == irr_ngb_i;
             const idx_t mat_off = j * slice_dki_size + i * slice_dk_size + (kend - 1) * num_diag;
             const idx_t vec_off = j * vec_ki_size + i * vec_k_size + (kend - 1);
             const data_t * L_jik = L_data + mat_off, * U_jik = U_data + mat_off;
             const calc_t * sqD_jik = scaled ? (sqD_data + vec_off) : nullptr;
             calc_t * x_jik = x_data + vec_off;
             const calc_t * b_jik = b_data + vec_off;
-            kernel(col_height, vec_k_size, vec_ki_size, weight, L_jik, U_jik, b_jik, x_jik, sqD_jik);
+            if (task_check) {
+                idx_t ir = irrg_to_Struct[ptr].loc_id;
+                assert(par_A->irrgPts[ir].gid == x.irrgPts[ir].gid);// 确保是同一个非规则点
+                const calc_t contrib = irrg_to_Struct[ptr].val * x.irrgPts[ir].val;// 非规则点对该柱中某个点的影响值
+
+                kernel_irr(col_height, vec_k_size, vec_ki_size, weight, L_jik, U_jik, b_jik, x_jik, sqD_jik, irr_ngb_k - (kend - 1), contrib);
+
+                need_to_check = (--ptr) >= 0;
+                if (need_to_check) {
+                    assert(irr_ngb_i == irrg_to_Struct[ptr].i);
+                    assert(irr_ngb_k == irrg_to_Struct[ptr].k);
+                    irr_ngb_j = irrg_to_Struct[ptr].j;
+                }
+            } else {
+                kernel(col_height, vec_k_size, vec_ki_size, weight, L_jik, U_jik, b_jik, x_jik, sqD_jik);
+            }
         }
+    }
+
+    // 再处理非规则点
+    assert(par_A->num_irrgPts == x.num_irrgPts && x.num_irrgPts == b.num_irrgPts);
+    for (idx_t ir = par_A->num_irrgPts - 1; ir >= 0; ir--) {
+        assert(par_A->irrgPts[ir].gid == x.irrgPts[ir].gid && x.irrgPts[ir].gid == b.irrgPts[ir].gid);
+        const idx_t pbeg = par_A->irrgPts[ir].beg, pend = pbeg + par_A->irrgPts[ir].nnz;
+        calc_t tmp = 0.0;
+        assert(par_A->irrgPts_ngb_ijk[(pend-1)*3] == -1);
+        calc_t diag_val = par_A->irrgPts_A_vals[(pend-1)<<1];
+        #pragma omp parallel for schedule(static) reduction(+:tmp)
+        for (idx_t p = pbeg; p < pend - 1; p++) {// 跳过了对角元
+            const idx_t ngb_i = par_A->irrgPts_ngb_ijk[p*3  ],
+                        ngb_j = par_A->irrgPts_ngb_ijk[p*3+1],
+                        ngb_k = par_A->irrgPts_ngb_ijk[p*3+2];// global coord
+            const idx_t i = ibeg + ngb_i - par_A->offset_x,
+                        j = jbeg + ngb_j - par_A->offset_y,
+                        k = kbeg + ngb_k - par_A->offset_z;
+            tmp += par_A->irrgPts_A_vals[p<<1] * x_data[k + i * vec_k_size + j * vec_ki_size];
+        }
+        tmp = b.irrgPts[ir].val - tmp;
+        x.irrgPts[ir].val *= (1.0 - weight);
+        x.irrgPts[ir].val += weight * tmp / diag_val;
     }
 }
 
@@ -788,17 +982,53 @@ void PointGS<idx_t, data_t, calc_t>::SOA_ForwardPass(const par_structVector<idx_
 
     void (*kernel)
         (const idx_t, const idx_t, const idx_t, const calc_t, const data_t**, const calc_t*, calc_t*, const calc_t*) = nullptr;
+    void (*kernel_irr)
+        (const idx_t, const idx_t, const idx_t, const calc_t, const data_t**, const calc_t*, calc_t*, const calc_t*, const calc_t*) = nullptr;
     idx_t num_arrs;
     if (this->zero_guess) {
-        kernel = scaled ? SOA_forward_zero_scaled : SOA_forward_zero;
+        kernel = scaled ? nullptr : SOA_forward_zero;
+        kernel_irr = scaled ? nullptr : SOA_forward_zero_irr;
         num_arrs = (DiagGroups_cnt >> 1) + (DiagGroups_cnt & 0x1);// 要跟不同par_A.num_diag的情形对得上
     } else {
-        kernel = scaled ? SOA_forward_ALL_scaled : SOA_forward_ALL;
+        kernel = scaled ? nullptr : SOA_forward_ALL;
+        kernel_irr = scaled ? nullptr : SOA_forward_ALL_irr;
         num_arrs = DiagGroups_cnt;
     }
     const idx_t beg_arrId = 0;// 前扫时总是从第0个开始
     const calc_t * sqD_data = scaled ? par_A->sqrt_D->data : nullptr;
     assert(kernel);
+    assert(kernel_irr);
+
+    // 前扫先处理非规则点
+    for (idx_t ir = 0; ir < par_A->num_irrgPts; ir++) {
+        assert(par_A->irrgPts[ir].gid == x.irrgPts[ir].gid && x.irrgPts[ir].gid == b.irrgPts[ir].gid);
+        const idx_t pbeg = par_A->irrgPts[ir].beg, pend = pbeg + par_A->irrgPts[ir].nnz;
+        calc_t tmp = 0.0;
+        assert(par_A->irrgPts_ngb_ijk[(pend-1)*3] == -1);
+        calc_t diag_val = par_A->irrgPts_A_vals[(pend-1)<<1];
+        #pragma omp parallel for schedule(static) reduction(+:tmp)
+        for (idx_t p = pbeg; p < pend - 1; p++) {// 跳过了对角元
+            const idx_t ngb_i = par_A->irrgPts_ngb_ijk[p*3  ],
+                        ngb_j = par_A->irrgPts_ngb_ijk[p*3+1],
+                        ngb_k = par_A->irrgPts_ngb_ijk[p*3+2];// global coord
+            const idx_t i = ibeg + ngb_i - par_A->offset_x,
+                        j = jbeg + ngb_j - par_A->offset_y,
+                        k = kbeg + ngb_k - par_A->offset_z;
+            tmp += par_A->irrgPts_A_vals[p<<1] * x_data[k + i * vec_k_size + j * vec_ki_size];
+        }
+        tmp = b.irrgPts[ir].val - tmp;
+        x.irrgPts[ir].val *= (1.0 - weight);
+        x.irrgPts[ir].val += weight * tmp / diag_val;
+    }
+
+    // 再处理结构点：边遍历三维向量边检查是否碰到非规则的邻居
+    idx_t ptr = 0, irr_ngb_i = -1, irr_ngb_j = -1, irr_ngb_k = -1;
+    bool need_to_check = ptr < num_irrgPts_effect;
+    // printf(" proc %d got %d need_to %d\n", my_pid, num_irrgPts_effect, need_to_check);
+    if (need_to_check) {
+        irr_ngb_i = irrg_to_Struct[ptr].i;  irr_ngb_j = irrg_to_Struct[ptr].j;  irr_ngb_k = irrg_to_Struct[ptr].k;
+        // printf(" proc %d before : %d %d %d\n", my_pid, irr_ngb_i, irr_ngb_j, irr_ngb_k);
+    }
 
     if (num_threads > 1) {
         const idx_t slope = (par_A->num_diag == 7 || par_A->num_diag == 15) ? 1 : 2;
@@ -811,6 +1041,7 @@ void PointGS<idx_t, data_t, calc_t>::SOA_ForwardPass(const par_structVector<idx_
         #pragma omp parallel
         {
             const data_t * A_jik[num_arrs];
+            calc_t irg_buf[col_height];
             int tid = omp_get_thread_num();
             int nt = omp_get_num_threads();
             // 各自开始计算
@@ -832,6 +1063,7 @@ void PointGS<idx_t, data_t, calc_t>::SOA_ForwardPass(const par_structVector<idx_
                     idx_t j_lev = jstart_lev - it;
 					idx_t i_lev = istart_lev + it * slope;
                     idx_t j = jbeg + j_lev, i = ibeg + i_lev;// 用于数组选址计算的下标
+                    bool task_check = need_to_check && j == irr_ngb_j && i == irr_ngb_i;
                     idx_t i_to_wait = (i == iend - 1) ? i_lev : (i_lev + wait_offi);
                     const idx_t vec_off = j * vec_ki_size    + i * vec_k_size    + kbeg;
                     for (idx_t id = 0; id < num_arrs; id++) {
@@ -847,18 +1079,38 @@ void PointGS<idx_t, data_t, calc_t>::SOA_ForwardPass(const par_structVector<idx_
                     if (it == t_end - 1) while (__atomic_load_n(&flag[j_lev  ], __ATOMIC_ACQUIRE) < i_to_wait) {  }
                     
                     // 中间的不需等待
-                    kernel(col_height, vec_k_size, vec_ki_size, weight, A_jik, b_jik, x_jik, sqD_jik);
+                    if (task_check) {
+                        for (idx_t k = 0; k < col_height; k++)
+                            irg_buf[k] = 0.0;
 
+                        idx_t ir = irrg_to_Struct[ptr].loc_id; 
+                        assert(par_A->irrgPts[ir].gid == x.irrgPts[ir].gid);// 确保是同一个非规则点
+                        irg_buf[irr_ngb_k - kbeg] = irrg_to_Struct[ptr].val * x.irrgPts[ir].val;
+
+                        kernel_irr(col_height, vec_k_size, vec_ki_size, weight, A_jik, b_jik, x_jik, sqD_jik, irg_buf);
+
+                        need_to_check = (++ptr) < num_irrgPts_effect;
+                        if (need_to_check) {
+                            assert(irr_ngb_i == irrg_to_Struct[ptr].i);
+                            assert(irr_ngb_k == irrg_to_Struct[ptr].k);
+                            irr_ngb_j = irrg_to_Struct[ptr].j;
+                        }
+                    } else {
+                        kernel(col_height, vec_k_size, vec_ki_size, weight, A_jik, b_jik, x_jik, sqD_jik);
+                    }
                     if (it == t_beg || it == t_end - 1) __atomic_store_n(&flag[j_lev+1], i_lev, __ATOMIC_RELEASE);
                     else flag[j_lev+1] = i_lev;
                 }
+                #pragma omp barrier
             }
         }
     }
     else {
         const data_t * A_jik[num_arrs];
+        calc_t irg_buf[col_height];
         for (idx_t j = jbeg; j < jend; j++)
         for (idx_t i = ibeg; i < iend; i++) {
+            bool task_check = need_to_check && j == irr_ngb_j && i == irr_ngb_i;
             const idx_t vec_off = j * vec_ki_size    + i * vec_k_size    + kbeg;
             for (idx_t id = 0; id < num_arrs; id++) {
                 idx_t gid = beg_arrId + id;
@@ -868,7 +1120,25 @@ void PointGS<idx_t, data_t, calc_t>::SOA_ForwardPass(const par_structVector<idx_
             const calc_t * sqD_jik = scaled ? (sqD_data + vec_off) : nullptr;
             calc_t * x_jik = x_data + vec_off;
             const calc_t * b_jik = b_data + vec_off;
-            kernel(col_height, vec_k_size, vec_ki_size, weight, A_jik, b_jik, x_jik, sqD_jik);
+            if (task_check) {
+                for (idx_t k = 0; k < col_height; k++)
+                    irg_buf[k] = 0.0;
+
+                idx_t ir = irrg_to_Struct[ptr].loc_id; 
+                assert(par_A->irrgPts[ir].gid == x.irrgPts[ir].gid);// 确保是同一个非规则点
+                irg_buf[irr_ngb_k - kbeg] = irrg_to_Struct[ptr].val * x.irrgPts[ir].val;
+
+                kernel_irr(col_height, vec_k_size, vec_ki_size, weight, A_jik, b_jik, x_jik, sqD_jik, irg_buf);
+
+                need_to_check = (++ptr) < num_irrgPts_effect;
+                if (need_to_check) {
+                    assert(irr_ngb_i == irrg_to_Struct[ptr].i);
+                    assert(irr_ngb_k == irrg_to_Struct[ptr].k);
+                    irr_ngb_j = irrg_to_Struct[ptr].j;
+                }
+            } else {
+                kernel(col_height, vec_k_size, vec_ki_size, weight, A_jik, b_jik, x_jik, sqD_jik);
+            }
         }
     }
 }
@@ -897,18 +1167,30 @@ void PointGS<idx_t, data_t, calc_t>::SOA_BackwardPass(const par_structVector<idx
 
     void (*kernel)
         (const idx_t, const idx_t, const idx_t, const calc_t, const data_t**, const calc_t*, calc_t*, const calc_t*) = nullptr;
+    void (*kernel_irr)
+        (const idx_t, const idx_t, const idx_t, const calc_t, const data_t**, const calc_t*, calc_t*, const calc_t*, const calc_t*) = nullptr;
     idx_t num_arrs, beg_arrId;
     if (this->zero_guess) {
-        kernel = scaled ? SOA_backward_zero_scaled : SOA_backward_zero;
+        kernel = scaled ? nullptr : SOA_backward_zero;
+        kernel_irr = scaled ? nullptr : SOA_backward_zero_irr;
         num_arrs = (DiagGroups_cnt >> 1) + (DiagGroups_cnt & 0x1);// 要跟不同par_A.num_diag的情形对得上
         beg_arrId = DiagGroups_cnt >> 1;
     } else {
-        kernel = scaled ? SOA_backward_ALL_scaled : SOA_backward_ALL;
+        kernel = scaled ? nullptr : SOA_backward_ALL;
+        kernel_irr = scaled ? nullptr : SOA_backward_ALL_irr;
         num_arrs = DiagGroups_cnt;
         beg_arrId= 0;
     }
     const calc_t * sqD_data = scaled ? par_A->sqrt_D->data : nullptr;
     assert(kernel);
+    assert(kernel_irr);
+
+    // 后扫先处理结构点
+    idx_t ptr = num_irrgPts_effect - 1, irr_ngb_i = -1, irr_ngb_j = -1, irr_ngb_k = -1;
+    bool need_to_check = ptr >= 0;
+    if (need_to_check) {
+        irr_ngb_i = irrg_to_Struct[ptr].i;  irr_ngb_j = irrg_to_Struct[ptr].j;  irr_ngb_k = irrg_to_Struct[ptr].k;
+    }
 
     if (num_threads > 1) {
         const idx_t slope = (par_A->num_diag == 7 || par_A->num_diag == 15) ? 1 : 2;
@@ -921,6 +1203,7 @@ void PointGS<idx_t, data_t, calc_t>::SOA_BackwardPass(const par_structVector<idx
         #pragma omp parallel
         {
             const data_t * A_jik[num_arrs];
+            calc_t irg_buf[col_height];// 非规则点对一整柱的贡献
             int tid = omp_get_thread_num();
             int nt = omp_get_num_threads();
             // 各自开始计算
@@ -942,6 +1225,7 @@ void PointGS<idx_t, data_t, calc_t>::SOA_BackwardPass(const par_structVector<idx
                     idx_t j_lev = jstart_lev - it;
 					idx_t i_lev = istart_lev + it * slope;
                     idx_t j = jbeg + j_lev, i = ibeg + i_lev;// 用于数组选址计算的下标
+                    bool task_check = need_to_check && j == irr_ngb_j && i == irr_ngb_i;
                     idx_t i_to_wait = (i == ibeg) ? i_lev : (i_lev + wait_offi);
                     const idx_t vec_off = j * vec_ki_size + i * vec_k_size + kend;
                     for (idx_t id = 0; id < num_arrs; id++) {
@@ -956,17 +1240,39 @@ void PointGS<idx_t, data_t, calc_t>::SOA_BackwardPass(const par_structVector<idx
                     if (it == t_beg) while ( __atomic_load_n(&flag[j_lev+1], __ATOMIC_ACQUIRE) > i_to_wait) {  }
                     if (it == t_end - 1) while (__atomic_load_n(&flag[j_lev  ], __ATOMIC_ACQUIRE) > i_lev + 1) {  }
                     // 中间的不需等待
-                    kernel(col_height, vec_k_size, vec_ki_size, weight, A_jik, b_jik, x_jik, sqD_jik);
+                    
+                    if (task_check) {
+                        for (idx_t k = 0; k < col_height; k++)// 预先准备好非规则点的贡献（一柱数组）
+                            irg_buf[k] = 0.0;
+                        
+                        idx_t ir = irrg_to_Struct[ptr].loc_id;
+                        assert(par_A->irrgPts[ir].gid == x.irrgPts[ir].gid);// 确保是同一个非规则点
+                        irg_buf[irr_ngb_k - kbeg] = irrg_to_Struct[ptr].val * x.irrgPts[ir].val;
+                        
+                        kernel_irr(col_height, vec_k_size, vec_ki_size, weight, A_jik, b_jik, x_jik, sqD_jik, irg_buf);
+
+                        need_to_check = (--ptr) >= 0;
+                        if (need_to_check) {
+                            assert(irr_ngb_i == irrg_to_Struct[ptr].i);
+                            assert(irr_ngb_k == irrg_to_Struct[ptr].k);
+                            irr_ngb_j = irrg_to_Struct[ptr].j;
+                        }
+                    } else {
+                        kernel(col_height, vec_k_size, vec_ki_size, weight, A_jik, b_jik, x_jik, sqD_jik);
+                    }
                     if (it == t_beg || it == t_end - 1) __atomic_store_n(&flag[j_lev], i_lev, __ATOMIC_RELEASE);
                     else flag[j_lev] = i_lev;
                 }
+                #pragma omp barrier
             }
         }
     }
     else {
         const data_t * A_jik[num_arrs];
+        calc_t irg_buf[col_height];// 非规则点对一整柱的贡献
         for (idx_t j = jend - 1; j >= jbeg; j--)
         for (idx_t i = iend - 1; i >= ibeg; i--) {
+            bool task_check = need_to_check && j == irr_ngb_j && i == irr_ngb_i;
             const idx_t vec_off = j * vec_ki_size + i * vec_k_size + kend;// 注意这里偏移是kend
             for (idx_t id = 0; id < num_arrs; id++) {
                 idx_t gid = beg_arrId + id;
@@ -976,8 +1282,50 @@ void PointGS<idx_t, data_t, calc_t>::SOA_BackwardPass(const par_structVector<idx
             const calc_t * sqD_jik = scaled ? (sqD_data + vec_off) : nullptr;
             calc_t * x_jik = x_data + vec_off;
             const calc_t * b_jik = b_data + vec_off;
-            kernel(col_height, vec_k_size, vec_ki_size, weight, A_jik, b_jik, x_jik, sqD_jik);
+            
+            if (task_check) {
+                for (idx_t k = 0; k < col_height; k++)// 预先准备好非规则点的贡献（一柱数组）
+                    irg_buf[k] = 0.0;
+                
+                idx_t ir = irrg_to_Struct[ptr].loc_id;
+                assert(par_A->irrgPts[ir].gid == x.irrgPts[ir].gid);// 确保是同一个非规则点
+                irg_buf[irr_ngb_k - kbeg] = irrg_to_Struct[ptr].val * x.irrgPts[ir].val;
+                
+                kernel_irr(col_height, vec_k_size, vec_ki_size, weight, A_jik, b_jik, x_jik, sqD_jik, irg_buf);
+
+                need_to_check = (--ptr) >= 0;
+                if (need_to_check) {
+                    assert(irr_ngb_i == irrg_to_Struct[ptr].i);
+                    assert(irr_ngb_k == irrg_to_Struct[ptr].k);
+                    irr_ngb_j = irrg_to_Struct[ptr].j;
+                }
+            } else {
+                kernel(col_height, vec_k_size, vec_ki_size, weight, A_jik, b_jik, x_jik, sqD_jik);
+            }
         }
+    }
+
+    // 再处理非规则点
+    assert(par_A->num_irrgPts == x.num_irrgPts && x.num_irrgPts == b.num_irrgPts);
+    for (idx_t ir = par_A->num_irrgPts - 1; ir >= 0; ir--) {
+        assert(par_A->irrgPts[ir].gid == x.irrgPts[ir].gid && x.irrgPts[ir].gid == b.irrgPts[ir].gid);
+        const idx_t pbeg = par_A->irrgPts[ir].beg, pend = pbeg + par_A->irrgPts[ir].nnz;
+        calc_t tmp = 0.0;
+        assert(par_A->irrgPts_ngb_ijk[(pend-1)*3] == -1);
+        calc_t diag_val = par_A->irrgPts_A_vals[(pend-1)<<1];
+        #pragma omp parallel for schedule(static) reduction(+:tmp)
+        for (idx_t p = pbeg; p < pend - 1; p++) {// 跳过了对角元
+            const idx_t ngb_i = par_A->irrgPts_ngb_ijk[p*3  ],
+                        ngb_j = par_A->irrgPts_ngb_ijk[p*3+1],
+                        ngb_k = par_A->irrgPts_ngb_ijk[p*3+2];// global coord
+            const idx_t i = ibeg + ngb_i - par_A->offset_x,
+                        j = jbeg + ngb_j - par_A->offset_y,
+                        k = kbeg + ngb_k - par_A->offset_z;
+            tmp += par_A->irrgPts_A_vals[p<<1] * x_data[k + i * vec_k_size + j * vec_ki_size];
+        }
+        tmp = b.irrgPts[ir].val - tmp;
+        x.irrgPts[ir].val *= (1.0 - weight);
+        x.irrgPts[ir].val += weight * tmp / diag_val;
     }
 }
 
