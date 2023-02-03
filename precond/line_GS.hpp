@@ -61,6 +61,7 @@ public:
 	void post_setup() {
 		const idx_t num_diag = ((const par_structMatrix<idx_t, calc_t, calc_t>*)this->oper)->num_diag;
 		if constexpr (sizeof(calc_t) != sizeof(data_t) && sizeof(data_t) == 2) {
+#ifdef __aarch64__
 			static_assert(sizeof(data_t) < sizeof(calc_t));
 			separate_diags();
 			switch(num_diag)
@@ -86,6 +87,9 @@ public:
             default:
                 MPI_Abort(MPI_COMM_WORLD, -10304);
             }
+#else
+			assert(false);
+#endif
 		}
 		else {// 纯单一精度
 			separate_LU();

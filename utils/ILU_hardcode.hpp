@@ -38,6 +38,7 @@ void struct_2d5_trsv_forward_hardCode(const data_t * l, const oper_t * b, oper_t
         }
     }
     else {
+#ifdef __aarch64__
         static_assert(sizeof(data_t) == 2);
         assert(shuffled);
         /*
@@ -158,6 +159,9 @@ void struct_2d5_trsv_forward_hardCode(const data_t * l, const oper_t * b, oper_t
                 A0_3 += 4;
             }
         }
+#else
+        assert(false);
+#endif
     }
 }
 
@@ -191,6 +195,7 @@ void struct_2d5_trsv_backward_hardCode(const data_t * u, const oper_t * b, oper_
         }
     }
     else {
+#ifdef __aarch64__
         static_assert(sizeof(data_t) == 2);
         assert(shuffled);
         /*
@@ -349,6 +354,9 @@ void struct_2d5_trsv_backward_hardCode(const data_t * u, const oper_t * b, oper_
                 A0_1 -= 2; A2_4 -= 3;
             }
         }
+#else
+        assert(false);
+#endif
     }
 }
 
@@ -1216,6 +1224,7 @@ void struct_sptrsv_3d_forward_frame_hardCode(const data_t * l, const oper_t * b,
         }
     } 
     else {
+#ifdef __aarch64__
         const data_t * L_groups[lnz >> 1];
         idx_t cnt_groups[(lnz >> 1) + 1];// 类似于row_ptr的作用
         idx_t num_groups = 0;
@@ -1318,6 +1327,9 @@ void struct_sptrsv_3d_forward_frame_hardCode(const data_t * l, const oper_t * b,
                 kernel(dim_2, dim_1, L_jik, b_jik, x_jik);
             }
         }
+#else
+        assert(false);
+#endif
     }
 
 #ifdef PROFILE
@@ -1420,6 +1432,7 @@ void struct_sptrsv_3d_backward_frame_hardCode(const data_t * u, const oper_t * b
         }
     }
     else {
+#ifdef __aarch64__
         const data_t * U_groups[rnz >> 1];
         idx_t cnt_groups[(rnz >> 1) + 1];// 类似于row_ptr的作用
         idx_t num_groups = 0;
@@ -1522,6 +1535,9 @@ void struct_sptrsv_3d_backward_frame_hardCode(const data_t * u, const oper_t * b
                 kernel(dim_2, dim_1, U_jik, b_jik, x_jik);
             }
         }
+#else
+        assert(false);
+#endif
     }
 
 #ifdef PROFILE

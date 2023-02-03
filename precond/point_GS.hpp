@@ -83,6 +83,7 @@ public:
 
         const idx_t num_diag = ((const par_structMatrix<idx_t, calc_t, calc_t>&)op).num_diag;
         if constexpr (sizeof(calc_t) != sizeof(data_t) && sizeof(data_t) == 2 && sizeof(calc_t) == 4) {
+#ifdef __aarch64__
             // 单-半精度混合计算
             assert(sizeof(data_t) < sizeof(calc_t));
             separate_Diags();
@@ -113,6 +114,9 @@ public:
             default:
                 MPI_Abort(MPI_COMM_WORLD, -10202);
             }
+#else
+            assert(false);
+#endif
         }
         else {// 纯单一精度或者双-单混合
             separate_LU();

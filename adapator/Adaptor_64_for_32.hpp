@@ -130,7 +130,8 @@ void Adaptor_64_for_32::SetOperator(const Operator<int, double, double> & op) {
         int my_pid; MPI_Comm_rank(MPI_COMM_WORLD, &my_pid);
         if (my_pid == 0) printf("prec need to scale\n");
         if (prc_name == "GMG") {// 多重网格先做完Galerkin三重积之后，在建立smoother前再做scale
-            ((GeometricMultiGrid<int, __fp16, float>*)real_prec)->scale_before_setup_smoothers = scale_before_setup;
+            // ((GeometricMultiGrid<int, __fp16, float>*)real_prec)->scale_before_setup_smoothers = scale_before_setup;
+            A_trc->scale(10.0);
             real_prec->SetOperator(*A_trc);
         } else {// 普通的预条件scale完再传进去
             A_trc->scale(1.0);
