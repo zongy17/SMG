@@ -75,6 +75,7 @@ void inline AOS_ilu_backward_zero_3d15(const idx_t dim_2, const idx_t dim_1,
 
 -------------------------------------------------------
 */
+#ifdef __aarch64__
 #define GROUP_LEN 8
 #define NEON_LEN 4
 // ========================== BILU ===================================
@@ -284,6 +285,6 @@ void inline SOA_ilu_backward_zero_3d15_Cal32Stg16(const int dim_2, const int dim
 }
 #undef NEON_LEN
 #undef GROUP_LEN
-
+#endif
 
 #endif

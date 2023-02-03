@@ -83,6 +83,7 @@ public:
 
         const idx_t num_diag = ((const par_structMatrix<idx_t, calc_t, calc_t>&)op).num_diag;
         if constexpr (sizeof(calc_t) != sizeof(data_t)) {
+#ifdef __aarch64__
             separate_Diags();
             if constexpr (sizeof(calc_t) == 4 && sizeof(data_t) == 2) {// 单-半精度混合计算
                 switch (num_diag)
@@ -130,6 +131,9 @@ public:
                     MPI_Abort(MPI_COMM_WORLD, -10202);
                 }
             }
+#else
+            assert(false);
+#endif
         }
         else {// 纯单一精度或者双-单混合
             separate_LU();

@@ -345,6 +345,7 @@ void inline AOS_ilu_backward_zero_3d19(const idx_t dim_2, const idx_t dim_1,
     }
 }
 
+#ifdef __aarch64__
 #define NEON_LEN 4
 // =========================================================================
 // =========================== Structure Of Array ==========================
@@ -1728,4 +1729,5 @@ void inline SOA_ilu_backward_zero_3d19_Cal32Stg16(const int dim_2, const int dim
 
 #undef NEON_LEN
 #undef GROUP_LEN
+#endif
 #endif

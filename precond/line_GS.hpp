@@ -61,6 +61,7 @@ public:
 	void post_setup() {
 		const idx_t num_diag = ((const par_structMatrix<idx_t, calc_t, calc_t>*)this->oper)->num_diag;
 		if constexpr (sizeof(calc_t) != sizeof(data_t)) {
+#ifdef __aarch64__
 			separate_diags();
 			if constexpr (sizeof(calc_t) == 4 && sizeof(data_t) == 2) {
 				switch(num_diag)
@@ -88,6 +89,9 @@ public:
             	}
 			}
 			else assert(false);
+#else
+			assert(false);
+#endif
 		}
 		else {// 纯单一精度
 			separate_LU();

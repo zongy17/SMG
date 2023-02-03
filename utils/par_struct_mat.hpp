@@ -57,6 +57,7 @@ public:
         }
     }
     void separate_Diags() const;
+    void separate_truncate_Diags(const seq_structMatrix<idx_t, calc_t, calc_t> & A_high);
     void update_halo();
     void Mult(const par_structVector<idx_t, calc_t> & x, 
                     par_structVector<idx_t, calc_t> & y, bool use_zero_guess/* ignored */) const;
@@ -117,6 +118,7 @@ par_structMatrix<idx_t, data_t, calc_t>::par_structMatrix(MPI_Comm comm, idx_t n
     {
     case 7:
         stencil = stencil_offset_3d7;
+#ifdef __aarch64__
         if constexpr (sizeof(data_t) != sizeof(calc_t)) {
             if constexpr (sizeof(calc_t) == 4 && sizeof(data_t) == 2) {
                 SOA_spmv = SOA_spmv_3d7_Cal32Stg16;
@@ -124,6 +126,7 @@ par_structMatrix<idx_t, data_t, calc_t>::par_structMatrix(MPI_Comm comm, idx_t n
                 SOA_spmv_scaled = SOA_spmv_3d7_Cal64Stg16_scaled;
             }
         }
+#endif
         break;
     case 19:
         stencil = stencil_offset_3d19;
@@ -616,6 +619,55 @@ void par_structMatrix<idx_t, data_t, calc_t>::separate_Diags() const
     #pragma omp parallel for schedule(static)
     for (idx_t e = 0; e < tot_elems; e++) {
         const data_t * aos_ptr = local_matrix->data + e * local_matrix->num_diag;
+        data_t * soa_ptrs[DiagGroups_cnt];
+        for (idx_t g = 0; g < DiagGroups_cnt; g++)
+            soa_ptrs[g] = DiagGroups[g]->data + e * DiagGroups[g]->num_diag;
+
+        for (idx_t d = 0; d < num_diag; d++) {
+            // continuous
+            idx_t gid = d / NEON_MAX_STRIDE;// group id
+            idx_t lid = d % NEON_MAX_STRIDE;// land id
+
+            // cyclic
+            // idx_t gid = d % DiagGroups_cnt;// group id
+            // idx_t lid = d / DiagGroups_cnt;// land id
+            soa_ptrs[gid][lid] = aos_ptr[d];
+        }
+    }
+    DiagGroups_separated = true;
+    if (num_diag == 7) assert(DiagGroups_cnt == 2);
+    else if (num_diag == 19) assert(DiagGroups_cnt == 5);
+    else if (num_diag == 27) assert(DiagGroups_cnt == 7);
+}
+
+template<typename idx_t, typename data_t, typename calc_t>
+void par_structMatrix<idx_t, data_t, calc_t>::separate_truncate_Diags(const seq_structMatrix<idx_t, calc_t, calc_t> & A_high)
+{
+    assert(DiagGroups_separated == false && DiagGroups == nullptr);
+    assert(A_high.num_diag == num_diag);
+    CHECK_LOCAL_HALO(A_high, *local_matrix);
+    DiagGroups_cnt = num_diag / NEON_MAX_STRIDE;// number of groups
+    idx_t last_group = num_diag - NEON_MAX_STRIDE * DiagGroups_cnt;
+    if (last_group > 0) DiagGroups_cnt ++;// additional group to contain remaining diags
+
+    DiagGroups = new seq_structMatrix<idx_t, data_t, calc_t> * [DiagGroups_cnt];
+    for (idx_t id = 0; id < DiagGroups_cnt; id++) {
+        if (id == DiagGroups_cnt - 1 && last_group > 0)
+            DiagGroups[id] = new seq_structMatrix<idx_t, data_t, calc_t>
+                (last_group   , A_high.local_x, A_high.local_y, A_high.local_z,
+                                A_high.halo_x , A_high.halo_y , A_high.halo_z);
+        else
+            DiagGroups[id] = new seq_structMatrix<idx_t, data_t, calc_t>
+                (NEON_MAX_STRIDE,A_high.local_x, A_high.local_y, A_high.local_z,
+                                A_high.halo_x , A_high.halo_y , A_high.halo_z);
+    }
+
+    const idx_t tot_elems = (A_high.local_y + A_high.halo_y * 2)
+                        *   (A_high.local_x + A_high.halo_x * 2)
+                        *   (A_high.local_z + A_high.halo_z * 2);
+    #pragma omp parallel for schedule(static)
+    for (idx_t e = 0; e < tot_elems; e++) {
+        const calc_t * aos_ptr = A_high.data + e * num_diag;
         data_t * soa_ptrs[DiagGroups_cnt];
         for (idx_t g = 0; g < DiagGroups_cnt; g++)
             soa_ptrs[g] = DiagGroups[g]->data + e * DiagGroups[g]->num_diag;

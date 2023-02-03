@@ -102,6 +102,7 @@ void TridiagSolver<idx_t, data_t, oper_t>::Solve(oper_t * rhs, oper_t * sol) {
 }
 
 
+#ifdef __aarch64__
 #define NEON_LEN 4
 
 template<typename idx_t, typename data_t, typename oper_t>
@@ -184,6 +185,7 @@ void TridiagSolver<idx_t, data_t, oper_t>::Solve_neon_prft(oper_t * __restrict__
 }
 
 #undef NEON_LEN
+#endif
 
 template<typename idx_t, typename data_t>
 void tridiag_thomas(data_t * a, data_t * b, data_t * c, data_t * d, data_t * sol, idx_t n_size)
