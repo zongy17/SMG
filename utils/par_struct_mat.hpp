@@ -146,7 +146,9 @@ par_structMatrix<idx_t, data_t, calc_t>::par_structMatrix(MPI_Comm comm, idx_t n
     {
     case 7:
         stencil = stencil_offset_3d7;
+#ifdef __aarch64__
         if constexpr (sizeof(data_t) != sizeof(calc_t)) SOA_spmv = SOA_spmv_3d7_Cal32Stg16;
+#endif
         break;
     default:
         printf("not supported number of diagonals %d\n", num_diag);

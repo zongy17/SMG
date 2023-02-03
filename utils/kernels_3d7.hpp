@@ -447,6 +447,7 @@ void inline AOS_ilu_backward_zero_3d7(const idx_t dim_2, const idx_t dim_1,
 
 -------------------------------------------------------
 */
+#ifdef __aarch64__
 #define GROUP_LEN 8
 #define NEON_LEN 4
 // ============================ SPMV =================================
@@ -2003,5 +2004,6 @@ void inline SOA_ALL_3d7_scaled(const idx_t num,
 }
 #undef NEON_LEN
 #undef GROUP_LEN
+#endif
 
 #endif

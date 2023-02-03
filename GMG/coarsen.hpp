@@ -265,8 +265,8 @@ par_structMatrix<idx_t, data_t, data_t> * Galerkin_RAP_3d(const Restrictor<idx_t
     // 由于每个非规则点既是细点，同时又是粗点，所以经自己细点的R和P一定都是1.0，
     // 所以只需要考虑自己细点的细邻居会产生什么样的R和P
 
-    idx_t num_max = 8;
-    idx_t off_max[num_max * 3] = {
+    const idx_t num_max = 8;
+    const idx_t off_max[num_max * 3] = {
         0, 0, 0,
         1, 0, 0,
         0, 1, 0,
@@ -276,8 +276,8 @@ par_structMatrix<idx_t, data_t, data_t> * Galerkin_RAP_3d(const Restrictor<idx_t
         0, 1, 1,
         1, 1, 1
     };
-    data_t R_vals[num_max] = {rstr.a0, rstr.a1, rstr.a1, rstr.a1, rstr.a2, rstr.a2, rstr.a2, rstr.a3};
-    data_t P_vals[num_max] = {prlg.a0, prlg.a1, prlg.a1, prlg.a1, prlg.a2, prlg.a2, prlg.a2, prlg.a3};
+    const data_t R_vals[num_max] = {rstr.a0, rstr.a1, rstr.a1, rstr.a1, rstr.a2, rstr.a2, rstr.a2, rstr.a3};
+    const data_t P_vals[num_max] = {prlg.a0, prlg.a1, prlg.a1, prlg.a1, prlg.a2, prlg.a2, prlg.a2, prlg.a3};
     idx_t R_num = -1;// 一个细点经限制而贡献到的粗点数
     if      (rstr.type == Rst_8cell ) R_num = 1;
     else if (rstr.type == Rst_64cell) R_num = 8;

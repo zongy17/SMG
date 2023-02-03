@@ -1,5 +1,5 @@
-CXX = mpicxx
-CFLAGS = -std=c++17 -Wall -fopenmp -march=armv8.2-a+fp16
+CXX = mpiicpc
+CFLAGS = -std=c++17 -Wall -fopenmp
 
 OPT = -O3 -g
 #OPT = -Ofast -DNDEBUG
@@ -7,20 +7,26 @@ OPT = -O3 -g
 
 CFLAGS += $(OPT)
 
-SUPERLU_HOME = /storage/hpcauser/zongyi/HUAWEI/software/superlu/5.3.0
-SUPERLU_INC = -I$(SUPERLU_HOME)/include
-LSUPERLU = -L$(SUPERLU_HOME)/lib64 -lsuperlu -lblas
+MKL_HOME = /software/intel/2019/compilers_and_libraries_2019.5.281/linux/mkl
+MKL_LIB  = $(MKL_HOME)/lib/intel64
+MKL_INCLUDE = $(MKL_HOME)/include
+LAPACK = -L$(MKL_LIB) -lmkl_intel_lp64 -lmkl_intel_thread -lmkl_core
+SCALAP = -L$(MKL_LIB) -lmkl_scalapack_lp64 -lmkl_blacs_intelmpi_lp64
 
-INC = $(SUPERLU_INC)
-EXT_LD = $(LSUPERLU)
+PARDISO_INC = -I$(MKL_INCLUDE)
+LPARDISO = $(SCALAP) $(LAPACK)
 
-CL  = mpicxx
+INC = $(PARDISO_INC)
+EXT_LD = $(LPARDISO)
+
+CL  = mpiicpc
 LFLAGS = -lm -fopenmp -lstdc++
 
 all: 	smg_All64.exe\
 	smg_K64P32.exe\
 	smg_All32.exe\
 	smg_K32P16.exe
+	 #smg_PC16 #smg_All80
 
 smg_All64.exe : main.cpp
 	$(CL) $^ $(CFLAGS) $(INC) -DKSP_BIT=64 -DPC_BIT=64 $(LFLAGS) $(EXT_LD) -o $@

@@ -108,6 +108,7 @@ public:
 
         const idx_t num_diag = ((const par_structMatrix<idx_t, calc_t, calc_t>&)op).num_diag;
         if constexpr (sizeof(calc_t) != sizeof(data_t)) {
+#ifdef __aarch64__
             separate_Diags();
             static_assert(sizeof(data_t) < sizeof(calc_t));
             if constexpr (sizeof(data_t) == 2 && sizeof(calc_t) == 4) {// 单-半精度混合计算
@@ -130,6 +131,9 @@ public:
             else {// 双-半精度混合
                 assert(false);
             }
+#else
+            assert(false);
+#endif
         }
         else {// 纯单一精度或者双-单混合
             separate_LU();

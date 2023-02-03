@@ -1,6 +1,8 @@
 #include "utils/par_struct_mat.hpp"
 #include "Solver_ls.hpp"
+#ifdef __aarch64__
 #include "adapator/Adaptor_64_for_32.hpp"
+#endif
 
 int main(int argc, char ** argv)
 {
