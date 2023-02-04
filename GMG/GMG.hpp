@@ -10,8 +10,8 @@
 #include <string>
 // #include "../copy_with_trunc.hpp"
 
-template<typename idx_t, typename data_t, typename calc_t>
-class GeometricMultiGrid : public Solver<idx_t, data_t, calc_t> {
+template<typename idx_t, typename data_t, typename setup_t, typename calc_t>
+class GeometricMultiGrid : public Solver<idx_t, data_t, setup_t, calc_t> {
 public:
     const idx_t num_levs, num_rediscrete, num_Galerkin;
     std::vector<idx_t> num_dims;
@@ -24,19 +24,19 @@ public:
     
     idx_t num_grid_sweeps[2];
 
-    const Operator<idx_t, calc_t, calc_t> * oper = nullptr;// operator (often as matrix-A of the problem)
+    const Operator<idx_t, setup_t, setup_t> * oper = nullptr;// operator (often as matrix-A of the problem)
 
     MPI_Comm comm;
     bool own_A0;
     // 各层网格上的方程：Au=f
     bool scale_before_setup_smoothers = false;
     par_structMatrix<idx_t, data_t, calc_t>** A_array_low  = nullptr;// 各层网格的A矩阵
-    par_structMatrix<idx_t, calc_t, calc_t>** A_array_high = nullptr;
+    par_structMatrix<idx_t, setup_t, setup_t>** A_array_high = nullptr;
     par_structVector<idx_t, calc_t>** U_array = nullptr;// 各层网格的解向量
     par_structVector<idx_t, calc_t>** F_array = nullptr;// 各层网格的右端向量
     par_structVector<idx_t, calc_t>** aux_arr = nullptr;
     // 各层上的平滑子，可以选用不同的
-    Solver<idx_t, data_t, calc_t> ** smoother = nullptr;
+    Solver<idx_t, data_t, setup_t, calc_t> ** smoother = nullptr;
     // 层间转移的算子，可以不同层间选用不同的
     Restrictor<idx_t, calc_t> ** R_ops = nullptr;
     Interpolator<idx_t, calc_t> ** P_ops = nullptr;
@@ -50,7 +50,7 @@ public:
 
     ~GeometricMultiGrid();
 
-    void SetOperator(const Operator<idx_t, calc_t, calc_t> & op) { 
+    void SetOperator(const Operator<idx_t, setup_t, setup_t> & op) { 
         this->oper = & op;
 
         this->input_dim[0] = op.input_dim[0];
@@ -61,7 +61,7 @@ public:
         this->output_dim[1] = op.output_dim[1];
         this->output_dim[2] = op.output_dim[2];
 
-        Setup(*((par_structMatrix<idx_t, calc_t, calc_t>*)(this->oper)));
+        Setup(*((par_structMatrix<idx_t, setup_t, setup_t>*)(this->oper)));
     }
     void SetRelaxWeights(const data_t * wts, idx_t num);
 
@@ -87,15 +87,15 @@ public:
     }
 
 protected:
-    void Setup(const par_structMatrix<idx_t, calc_t, calc_t> & A_problem);
+    void Setup(const par_structMatrix<idx_t, setup_t, setup_t> & A_problem);
     void V_Cycle(const par_structVector<idx_t, calc_t> & b, par_structVector<idx_t, calc_t> & x) const ;
     void Mult(const par_structVector<idx_t, calc_t> & input, par_structVector<idx_t, calc_t> & output) const {
         V_Cycle(input, output);
     }
 };
 
-template<typename idx_t, typename data_t, typename calc_t>
-GeometricMultiGrid<idx_t, data_t, calc_t>::GeometricMultiGrid(idx_t n_rediscrete, idx_t n_Galerkin, 
+template<typename idx_t, typename data_t, typename setup_t, typename calc_t>
+GeometricMultiGrid<idx_t, data_t, setup_t, calc_t>::GeometricMultiGrid(idx_t n_rediscrete, idx_t n_Galerkin, 
         const std::vector<std::string> matnames, const std::vector<RELAX_TYPE> rel_types)
     :   num_levs(n_rediscrete + n_Galerkin + 1), num_rediscrete(n_rediscrete), num_Galerkin(n_Galerkin)
 {
@@ -130,11 +130,11 @@ GeometricMultiGrid<idx_t, data_t, calc_t>::GeometricMultiGrid(idx_t n_rediscrete
     assert(relax_types.size() == rel_types.size() && relax_types.size() == ((size_t)num_levs));
 
     A_array_low = new par_structMatrix<idx_t, data_t, calc_t>* [num_levs];
-    A_array_high= new par_structMatrix<idx_t, calc_t, calc_t>* [num_levs];
+    A_array_high= new par_structMatrix<idx_t, setup_t, setup_t>* [num_levs];
     U_array = new par_structVector<idx_t, calc_t>* [num_levs];
     F_array = new par_structVector<idx_t, calc_t>* [num_levs];
     aux_arr = new par_structVector<idx_t, calc_t>* [num_levs];
-    smoother = new Solver<idx_t, data_t, calc_t>* [num_levs];
+    smoother = new Solver<idx_t, data_t, setup_t, calc_t>* [num_levs];
     R_ops   = new Restrictor<idx_t, calc_t>      * [num_levs - 1];
     P_ops   = new Interpolator<idx_t, calc_t>    * [num_levs - 1];
     coar_to_fine_maps = new COAR_TO_FINE_INFO<idx_t> [num_levs - 1];
@@ -145,8 +145,8 @@ GeometricMultiGrid<idx_t, data_t, calc_t>::GeometricMultiGrid(idx_t n_rediscrete
     }
 }
 
-template<typename idx_t, typename data_t, typename calc_t>
-GeometricMultiGrid<idx_t, data_t, calc_t>::~GeometricMultiGrid() {
+template<typename idx_t, typename data_t, typename setup_t, typename calc_t>
+GeometricMultiGrid<idx_t, data_t, setup_t, calc_t>::~GeometricMultiGrid() {
     for (idx_t i = 0; i < num_levs; i++) {
         if (i == 0 && own_A0) {
             delete A_array_high[i]; A_array_high[i] = nullptr;
@@ -171,8 +171,8 @@ GeometricMultiGrid<idx_t, data_t, calc_t>::~GeometricMultiGrid() {
     delete[] P_ops; P_ops = nullptr;
 }
 
-template<typename idx_t, typename data_t, typename calc_t>
-void GeometricMultiGrid<idx_t, data_t, calc_t>::Setup(const par_structMatrix<idx_t, calc_t, calc_t> & A_problem)
+template<typename idx_t, typename data_t, typename setup_t, typename calc_t>
+void GeometricMultiGrid<idx_t, data_t, setup_t, calc_t>::Setup(const par_structMatrix<idx_t, setup_t, setup_t> & A_problem)
 {
     // 根据外层问题的进程划分，来确定预条件多重网格的进程划分
     comm = A_problem.comm_pkg->cart_comm;
@@ -194,11 +194,11 @@ void GeometricMultiGrid<idx_t, data_t, calc_t>::Setup(const par_structMatrix<idx
         gy = A_problem.local_matrix->local_y * num_procs[0];
         gz = A_problem.local_matrix->local_z * num_procs[2];
 
-        A_array_high[0] = new par_structMatrix<idx_t, calc_t, calc_t>(comm, A_problem.num_diag, gx, gy, gz, num_procs[1], num_procs[0], num_procs[2]);
+        A_array_high[0] = new par_structMatrix<idx_t, setup_t, setup_t>(comm, A_problem.num_diag, gx, gy, gz, num_procs[1], num_procs[0], num_procs[2]);
         own_A0 = true;
         {// copy data
-            const   seq_structMatrix<idx_t, calc_t, calc_t> & out_mat = *(A_problem.local_matrix);
-                    seq_structMatrix<idx_t, calc_t, calc_t> & gmg_mat = *(A_array_high[0]->local_matrix);
+            const   seq_structMatrix<idx_t, setup_t, setup_t> & out_mat = *(A_problem.local_matrix);
+                    seq_structMatrix<idx_t, setup_t, setup_t> & gmg_mat = *(A_array_high[0]->local_matrix);
             CHECK_LOCAL_HALO(out_mat, gmg_mat);
             idx_t tot_len = (out_mat.halo_y * 2 + out_mat.local_y)
                         *   (out_mat.halo_x * 2 + out_mat.local_x)
@@ -302,9 +302,9 @@ void GeometricMultiGrid<idx_t, data_t, calc_t>::Setup(const par_structMatrix<idx
     }
 
     // 如有必要，截断A矩阵
-    if constexpr (sizeof(data_t) != sizeof(calc_t)) {
-        assert(sizeof(data_t) < sizeof(calc_t));
-        if (my_pid == 0) printf("Warning: GMG data_t %ld bytes, calc_t %ld bytes\n", sizeof(data_t), sizeof(calc_t));
+    if constexpr (sizeof(data_t) != sizeof(setup_t)) {
+        assert(sizeof(data_t) < sizeof(setup_t));
+        if (my_pid == 0) printf("Warning: GMG setup_t %ld bytes, calc_t %ld bytes\n", sizeof(setup_t), sizeof(calc_t));
         for (idx_t i = 0; i < num_levs; i++) {
             // if (relax_types[i] != PILU) {// what if BILU????
                 idx_t gx, gy, gz;
@@ -312,11 +312,21 @@ void GeometricMultiGrid<idx_t, data_t, calc_t>::Setup(const par_structMatrix<idx
                 gy = A_array_high[i]->local_matrix->local_y * num_procs[0]; // global_size_y
                 gz = A_array_high[i]->local_matrix->local_z * num_procs[2];
                 A_array_low[i] = new par_structMatrix<idx_t, data_t, calc_t>(comm, A_array_high[i]->num_diag, gx, gy, gz, num_procs[1], num_procs[0], num_procs[2]);
-                const   seq_structMatrix<idx_t, calc_t, calc_t> & src_h = *(A_array_high[i]->local_matrix);
-                A_array_low[i]->separate_truncate_Diags(src_h);
-                A_array_low[i]->sqrt_D = A_array_high[i]->sqrt_D;
-                A_array_low[i]->own_sqrt_D = false;
-                A_array_low[i]->scaled = A_array_high[i]->scaled;
+                const   seq_structMatrix<idx_t, setup_t, setup_t> & src_h = *(A_array_high[i]->local_matrix);
+                separate_truncate_Diags(src_h, *A_array_low[i]);
+                if (A_array_high[i]->scaled) {// copy & truncate sqrt_D
+                    A_array_low[i]->scaled = A_array_high[i]->scaled;
+                    const seq_structVector<idx_t, setup_t> & src_sqD = *(A_array_high[i]->sqrt_D);
+                    const idx_t lx = src_sqD.local_x, ly = src_sqD.local_y, lz = src_sqD.local_z,
+                                hx = src_sqD.halo_x , hy = src_sqD.halo_y , hz = src_sqD.halo_z ;
+                    A_array_low[i]->sqrt_D = new seq_structVector<idx_t, calc_t>(lx, ly, lz, hx, hy, hz);
+                    const idx_t tot_len = (lx + hx*2) * (ly + hy*2) * (lz + hz*2);
+                    calc_t * dst_data = A_array_low[i]->sqrt_D->data;
+                    #pragma omp parallel for schedule(static)
+                    for (idx_t i = 0; i < tot_len; i++)
+                        dst_data[i] = src_sqD.data[i];
+                    A_array_low[i]->own_sqrt_D = true;
+                }
             // }
         }
     }
@@ -326,7 +336,7 @@ void GeometricMultiGrid<idx_t, data_t, calc_t>::Setup(const par_structMatrix<idx
         for (idx_t i = 0; i < num_levs; i++) {
             if (relax_types[i] == PGS) {
                 if (my_pid == 0) printf("  using \033[1;35mpointwise-GS\033[0m as smoother of %d-th lev\n", i);
-                smoother[i] = new PointGS    <idx_t, data_t, calc_t>(SYMMETRIC);
+                smoother[i] = new PointGS    <idx_t, data_t, setup_t, calc_t>(SYMMETRIC);
                 smoother[i]->SetOperator(*A_array_high[i]);
                 // delete A_array_high[i]; A_array_high[i] = nullptr;
             }
@@ -369,10 +379,10 @@ void GeometricMultiGrid<idx_t, data_t, calc_t>::Setup(const par_structMatrix<idx
                 else if (A_array_high[i]->num_diag == 27) type = DenseLU_3D7;
                 else assert(false);
                 if (my_pid == 0) printf("  using \033[1;35mdense-LU type %d\033[0m as smoother of %d-th lev\n", type, i);
-                smoother[i] = new DenseLU<idx_t, data_t, calc_t>(type);
+                smoother[i] = new DenseLU<idx_t, data_t, setup_t, calc_t>(type);
                 t += wall_time();// LU分解的时间单独算
                 smoother[i]->SetOperator(*A_array_high[i]);
-                t += ((DenseLU<idx_t, data_t, calc_t>*)smoother[i])->setup_time;
+                t += ((DenseLU<idx_t, data_t, setup_t, calc_t>*)smoother[i])->setup_time;
                 t -= wall_time();
             }
             else {
@@ -415,8 +425,8 @@ void GeometricMultiGrid<idx_t, data_t, calc_t>::Setup(const par_structMatrix<idx
 #endif
 }
 
-template<typename idx_t, typename data_t, typename calc_t>
-void GeometricMultiGrid<idx_t, data_t, calc_t>::V_Cycle(const par_structVector<idx_t, calc_t> & b, par_structVector<idx_t, calc_t> & x) const
+template<typename idx_t, typename data_t, typename setup_t, typename calc_t>
+void GeometricMultiGrid<idx_t, data_t, setup_t, calc_t>::V_Cycle(const par_structVector<idx_t, calc_t> & b, par_structVector<idx_t, calc_t> & x) const
 {
     assert(this->oper != nullptr);
     CHECK_OUTPUT_DIM(*this, b);
@@ -436,15 +446,10 @@ void GeometricMultiGrid<idx_t, data_t, calc_t>::V_Cycle(const par_structVector<i
 
     // 除了最粗层，都能从细往粗走
     for ( ; i < num_levs - 1; i++) {
-        // double ck_dot = vec_dot<idx_t, calc_t, double>(*F_array[i], *F_array[i]);
-        // printf("before smth%d (f,f) = %.10e\n", i, ck_dot);
 
         for (idx_t j = 0; j < num_grid_sweeps[0]; j++)
             // 当前层对残差做平滑（对应前平滑），平滑后结果在U_array中：相当于在当前层解一次Mu=f
             smoother[i]->Mult(*F_array[i], *U_array[i], this->zero_guess && j == 0);
-        
-        // ck_dot = vec_dot<idx_t, calc_t, double>(*U_array[i], *U_array[i]);
-        // printf("after  smth%d (u,u) = %.10e\n", i, ck_dot);
         
         // 计算在当前层平滑后的残差
         if constexpr (sizeof(data_t) == sizeof(calc_t))
@@ -504,8 +509,8 @@ void GeometricMultiGrid<idx_t, data_t, calc_t>::V_Cycle(const par_structVector<i
     vec_copy(*U_array[0], x);
 }
 
-template<typename idx_t, typename data_t, typename calc_t>
-void GeometricMultiGrid<idx_t, data_t, calc_t>::SetRelaxWeights(const data_t * wts, idx_t num)
+template<typename idx_t, typename data_t, typename setup_t, typename calc_t>
+void GeometricMultiGrid<idx_t, data_t, setup_t, calc_t>::SetRelaxWeights(const data_t * wts, idx_t num)
 {
     assert(this->oper != nullptr);
     assert(num <= num_levs);

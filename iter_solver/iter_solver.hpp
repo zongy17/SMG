@@ -8,13 +8,14 @@ typedef enum {PREC, OPER, AXPY, DOT, NUM_KRYLOV_RECORD} KRYLOV_RECORD_TYPES;
 
 // 虚基类IterativeSolver，支持两种精度
 // 继承自虚基类->Solver->Operator，重写了SetOperator()，还需下一层子类重写Mult()
-template<typename idx_t, typename ksp_t, typename pc_t>
-class IterativeSolver : public Solver<idx_t, ksp_t, ksp_t> {
+// 预条件的存储类型pc_data_t, 预条件的计算类型pc_calc_t, 外迭代的精度ksp_t
+template<typename idx_t, typename pc_data_t, typename pc_calc_t, typename ksp_t>
+class IterativeSolver : public Solver<idx_t, ksp_t, ksp_t, ksp_t> {
 public:
     // oper(外迭代的算子/矩阵)，可以和prec(预条件子)采用不一样的精度
     const Operator<idx_t, ksp_t, ksp_t> *oper = nullptr;
     // 预条件子的存储采用低精度，计算采用高精度
-    Solver<idx_t, pc_t, ksp_t> *prec = nullptr;
+    Solver<idx_t, pc_data_t, ksp_t, pc_calc_t> *prec = nullptr;
 
     int max_iter = 10, print_level = -1;
     double rel_tol = 0.0, abs_tol = 0.0;// 用高精度的收敛判断
@@ -24,7 +25,7 @@ public:
     mutable double final_norm;
     mutable double part_times[NUM_KRYLOV_RECORD];
 
-    IterativeSolver() : Solver<idx_t, ksp_t, ksp_t>() {   }
+    IterativeSolver() : Solver<idx_t, ksp_t, ksp_t, ksp_t>() {   }
     ~IterativeSolver() {
     }
 
@@ -38,7 +39,7 @@ public:
     double GetFinalNorm() const { return final_norm; }
 
     /// This should be called before SetOperator
-    virtual void SetPreconditioner(Solver<idx_t, pc_t, ksp_t> & pr) {
+    virtual void SetPreconditioner(Solver<idx_t, pc_data_t, ksp_t, pc_calc_t> & pr) {
         prec = & pr;
         prec->zero_guess = true;// 预条件一般可以用0初值
     }

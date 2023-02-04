@@ -4,8 +4,8 @@
 #include "iter_solver.hpp"
 #include "../utils/par_struct_mat.hpp"
 
-template<typename idx_t, typename ksp_t, typename pc_t>
-class CGSolver : public IterativeSolver<idx_t, ksp_t, pc_t> {
+template<typename idx_t, typename pc_data_t, typename pc_calc_t, typename ksp_t>
+class CGSolver : public IterativeSolver<idx_t, pc_data_t, pc_calc_t, ksp_t> {
 public:
 
     CGSolver() {  };
@@ -21,8 +21,8 @@ public:
     }
 };
 
-template<typename idx_t, typename ksp_t, typename pc_t>
-void CGSolver<idx_t, ksp_t, pc_t>::Pipelined(const par_structVector<idx_t, ksp_t> & b, par_structVector<idx_t, ksp_t> & x) const
+template<typename idx_t, typename pc_data_t, typename pc_calc_t, typename ksp_t>
+void CGSolver<idx_t, pc_data_t, pc_calc_t, ksp_t>::Pipelined(const par_structVector<idx_t, ksp_t> & b, par_structVector<idx_t, ksp_t> & x) const
 {
     assert(this->oper != nullptr);
     CHECK_INPUT_DIM(*this, x);
@@ -123,8 +123,8 @@ void CGSolver<idx_t, ksp_t, pc_t>::Pipelined(const par_structVector<idx_t, ksp_t
     }
 }
 
-template<typename idx_t, typename ksp_t, typename pc_t>
-void CGSolver<idx_t, ksp_t, pc_t>::Chronopoulos_Gear(const par_structVector<idx_t, ksp_t> & b, par_structVector<idx_t, ksp_t> & x) const 
+template<typename idx_t, typename pc_data_t, typename pc_calc_t, typename ksp_t>
+void CGSolver<idx_t, pc_data_t, pc_calc_t, ksp_t>::Chronopoulos_Gear(const par_structVector<idx_t, ksp_t> & b, par_structVector<idx_t, ksp_t> & x) const 
 {
     assert(this->oper != nullptr);
     CHECK_INPUT_DIM(*this, x);
@@ -273,8 +273,8 @@ void CGSolver<idx_t, ksp_t, pc_t>::Chronopoulos_Gear(const par_structVector<idx_
     }
 }
 
-template<typename idx_t, typename ksp_t, typename pc_t>
-void CGSolver<idx_t, ksp_t, pc_t>::Standard(const par_structVector<idx_t, ksp_t> & b, par_structVector<idx_t, ksp_t> & x) const 
+template<typename idx_t, typename pc_data_t, typename pc_calc_t, typename ksp_t>
+void CGSolver<idx_t, pc_data_t, pc_calc_t, ksp_t>::Standard(const par_structVector<idx_t, ksp_t> & b, par_structVector<idx_t, ksp_t> & x) const 
 {
     assert(this->oper != nullptr);
     CHECK_INPUT_DIM(*this, x);
@@ -288,6 +288,23 @@ void CGSolver<idx_t, ksp_t, pc_t>::Standard(const par_structVector<idx_t, ksp_t>
 
     // 初始化辅助向量：r残差，p搜索方向，Ap为A乘以搜索方向
     par_structVector<idx_t, ksp_t> r(x), u(x), p(x), s(x);
+    par_structVector<idx_t, pc_calc_t> * pc_buf_b = nullptr, * pc_buf_x = nullptr;
+    if constexpr (sizeof(pc_calc_t) != sizeof(ksp_t)) {
+        const idx_t num_diag = ((const par_structMatrix<idx_t, ksp_t, ksp_t>*)this->oper)->num_diag;
+        pc_buf_b = new par_structVector<idx_t, pc_calc_t>(r.comm_pkg->cart_comm,
+            r.global_size_x, r.global_size_y, r.global_size_z,
+            r.global_size_x/r.local_vector->local_x,
+            r.global_size_y/r.local_vector->local_y,
+            r.global_size_z/r.local_vector->local_z, num_diag != 7);
+        pc_buf_x = new par_structVector<idx_t, pc_calc_t>(*pc_buf_b);
+        pc_buf_b->set_halo(0.0);
+        pc_buf_x->set_halo(0.0);
+    }
+    const idx_t jbeg = r.local_vector->halo_y, jend = jbeg + r.local_vector->local_y,
+                ibeg = r.local_vector->halo_x, iend = ibeg + r.local_vector->local_x,
+                kbeg = r.local_vector->halo_z, kend = kbeg + r.local_vector->local_z;
+    const idx_t col_height = kend - kbeg;
+    const idx_t vec_ki_size = r.local_vector->slice_ki_size, vec_k_size = r.local_vector->slice_k_size;
     r.set_halo(0.0); u.set_halo(0.0); p.set_halo(0.0); s.set_halo(0.0);
     double gamma, eta, alpha, beta;
     double tmp_loc[4], tmp_glb[4];// 用作局部点积的存储，发送缓冲区和接受缓冲区
@@ -303,10 +320,58 @@ void CGSolver<idx_t, ksp_t, pc_t>::Standard(const par_structVector<idx_t, ksp_t>
     // ck_dot = vec_dot<idx_t, ksp_t, double>(r, r);
     // printf("before prec (b,b) = %.10e\n", ck_dot);
     if (this->prec) {// 有预条件子，则以预条件后的残差M^{-1}*r作为搜索方向 p = M^{-1}*r
-        u.set_val(0.0);
-        record[PREC] -= wall_time();
-        this->prec->Mult(r, u, true);
-        record[PREC] += wall_time();
+        bool zero_guess = true;
+        if constexpr (sizeof(pc_calc_t) != sizeof(ksp_t)) {
+            {// copy in
+                const seq_structVector<idx_t, ksp_t> & src = *(r.local_vector);
+                seq_structVector<idx_t, pc_calc_t> & dst = *(pc_buf_b->local_vector);
+                CHECK_LOCAL_HALO(src, dst);
+                #pragma omp parallel for collapse(2) schedule(static)
+                for (int j = jbeg; j < jend; j++)
+                for (int i = ibeg; i < iend; i++) {
+                    const double* src_ptr = src.data + j * vec_ki_size + i * vec_k_size + kbeg;
+                    float       * dst_ptr = dst.data + j * vec_ki_size + i * vec_k_size + kbeg;
+                    for (int k = 0; k < col_height; k++)
+                        dst_ptr[k] = src_ptr[k];
+                }
+            }
+            if (zero_guess) {
+                pc_buf_x->set_val(0.0);
+            } else {// copy in
+                const seq_structVector<idx_t, ksp_t> & src = *(u.local_vector);
+                seq_structVector<idx_t, pc_calc_t> & dst = *(pc_buf_x->local_vector);
+                CHECK_LOCAL_HALO(src, dst);
+                #pragma omp parallel for collapse(2) schedule(static)
+                for (int j = jbeg; j < jend; j++)
+                for (int i = ibeg; i < iend; i++) {
+                    const double* src_ptr = src.data + j * vec_ki_size + i * vec_k_size + kbeg;
+                    float       * dst_ptr = dst.data + j * vec_ki_size + i * vec_k_size + kbeg;
+                    for (int k = 0; k < col_height; k++)
+                        dst_ptr[k] = src_ptr[k];
+                }
+            }
+            record[PREC] -= wall_time();
+            this->prec->Mult(*pc_buf_b, *pc_buf_x, true);
+            record[PREC] += wall_time();
+            {// copy out
+                const seq_structVector<idx_t, pc_calc_t> & src = *(pc_buf_x->local_vector);
+                seq_structVector<idx_t, ksp_t> & dst = *(u.local_vector);
+                CHECK_LOCAL_HALO(src, dst);
+                #pragma omp parallel for collapse(2) schedule(static)
+                for (int j = jbeg; j < jend; j++)
+                for (int i = ibeg; i < iend; i++) {
+                    const float* src_ptr = src.data + j * vec_ki_size + i * vec_k_size + kbeg;
+                    double     * dst_ptr = dst.data + j * vec_ki_size + i * vec_k_size + kbeg;
+                    for (int k = 0; k < col_height; k++)
+                        dst_ptr[k] = src_ptr[k];
+                }
+            }
+        } else {
+            if (zero_guess) u.set_val(0.0);
+            record[PREC] -= wall_time();
+            this->prec->Mult(r, u, true);
+            record[PREC] += wall_time();
+        }
     } else {// 没有预条件则直接以残差r作为搜索方向
         //record[AXPY] -= wall_time();
         vec_copy(r, u);
@@ -350,10 +415,58 @@ void CGSolver<idx_t, ksp_t, pc_t>::Standard(const par_structVector<idx_t, ksp_t>
         // ck_dot = vec_dot<idx_t, ksp_t, double>(r, r);
         // printf("before prec (b,b) = %.10e\n", ck_dot);
         if (this->prec) {
-            u.set_val(0.0);
-            record[PREC] -= wall_time();
-            this->prec->Mult(r, u, true);
-            record[PREC] += wall_time();
+            bool zero_guess = true;
+            if constexpr (sizeof(pc_calc_t) != sizeof(ksp_t)) {
+                {// copy in
+                    const seq_structVector<idx_t, ksp_t> & src = *(r.local_vector);
+                    seq_structVector<idx_t, pc_calc_t> & dst = *(pc_buf_b->local_vector);
+                    CHECK_LOCAL_HALO(src, dst);
+                    #pragma omp parallel for collapse(2) schedule(static)
+                    for (int j = jbeg; j < jend; j++)
+                    for (int i = ibeg; i < iend; i++) {
+                        const double* src_ptr = src.data + j * vec_ki_size + i * vec_k_size + kbeg;
+                        float       * dst_ptr = dst.data + j * vec_ki_size + i * vec_k_size + kbeg;
+                        for (int k = 0; k < col_height; k++)
+                            dst_ptr[k] = src_ptr[k];
+                    }
+                }
+                if (zero_guess) {
+                    pc_buf_x->set_val(0.0);
+                } else {// copy in
+                    const seq_structVector<idx_t, ksp_t> & src = *(u.local_vector);
+                    seq_structVector<idx_t, pc_calc_t> & dst = *(pc_buf_x->local_vector);
+                    CHECK_LOCAL_HALO(src, dst);
+                    #pragma omp parallel for collapse(2) schedule(static)
+                    for (int j = jbeg; j < jend; j++)
+                    for (int i = ibeg; i < iend; i++) {
+                        const double* src_ptr = src.data + j * vec_ki_size + i * vec_k_size + kbeg;
+                        float       * dst_ptr = dst.data + j * vec_ki_size + i * vec_k_size + kbeg;
+                        for (int k = 0; k < col_height; k++)
+                            dst_ptr[k] = src_ptr[k];
+                    }
+                }
+                record[PREC] -= wall_time();
+                this->prec->Mult(*pc_buf_b, *pc_buf_x, true);
+                record[PREC] += wall_time();
+                {// copy out
+                    const seq_structVector<idx_t, pc_calc_t> & src = *(pc_buf_x->local_vector);
+                    seq_structVector<idx_t, ksp_t> & dst = *(u.local_vector);
+                    CHECK_LOCAL_HALO(src, dst);
+                    #pragma omp parallel for collapse(2) schedule(static)
+                    for (int j = jbeg; j < jend; j++)
+                    for (int i = ibeg; i < iend; i++) {
+                        const float* src_ptr = src.data + j * vec_ki_size + i * vec_k_size + kbeg;
+                        double     * dst_ptr = dst.data + j * vec_ki_size + i * vec_k_size + kbeg;
+                        for (int k = 0; k < col_height; k++)
+                            dst_ptr[k] = src_ptr[k];
+                    }
+                }
+            } else {
+                if (zero_guess) u.set_val(0.0);
+                record[PREC] -= wall_time();
+                this->prec->Mult(r, u, true);
+                record[PREC] += wall_time();
+            }
         } else {
             //record[AXPY] -= wall_time();
             vec_copy(r, u);
@@ -396,6 +509,9 @@ void CGSolver<idx_t, ksp_t, pc_t>::Standard(const par_structVector<idx_t, ksp_t>
         alpha = gamma / eta;
         //record[DOT] += wall_time();
     }
+
+    if (pc_buf_x) delete pc_buf_x;
+    if (pc_buf_b) delete pc_buf_b;
 }
 
 

@@ -50,8 +50,8 @@ int main(int argc, char ** argv)
         par_structMatrix<IDX_TYPE, KSP_TYPE, KSP_TYPE> * A = nullptr;
         std::string pathname;
         IDX_TYPE num_discrete = 0, num_Galerkin = 0;
-        IterativeSolver<IDX_TYPE, KSP_TYPE, PC_TYPE> * solver = nullptr;
-        Solver<IDX_TYPE, PC_TYPE, KSP_TYPE> * precond = nullptr;
+        IterativeSolver<IDX_TYPE, PC_DATA_TYPE, PC_CALC_TYPE, KSP_TYPE> * solver = nullptr;
+        Solver         <IDX_TYPE, PC_DATA_TYPE, KSP_TYPE, PC_CALC_TYPE> * precond = nullptr;
         std::string data_path = "/storage/hpcauser/zongyi/HUAWEI/SMG/data";
 
         x = new par_structVector<IDX_TYPE, KSP_TYPE          >
@@ -74,20 +74,20 @@ int main(int argc, char ** argv)
             if (A->num_diag == 7) {
                 // srand(time(0));
                 // rand
-                A->set_diag_val(0, -1.0);
-                A->set_diag_val(1, -1.0);
-                A->set_diag_val(2, -1.0);
-                A->set_diag_val(3,  6.0);
-                A->set_diag_val(4, -1.0);
-                A->set_diag_val(5, -1.0);
-                A->set_diag_val(6, -1.0);
                 // A->set_diag_val(0, -1.0);
-                // A->set_diag_val(1, -2.0);
-                // A->set_diag_val(2, -4.0);
-                // A->set_diag_val(3, 14.0);
-                // A->set_diag_val(4, -4.0);
-                // A->set_diag_val(5, -2.0);
+                // A->set_diag_val(1, -1.0);
+                // A->set_diag_val(2, -1.0);
+                // A->set_diag_val(3,  6.0);
+                // A->set_diag_val(4, -1.0);
+                // A->set_diag_val(5, -1.0);
                 // A->set_diag_val(6, -1.0);
+                A->set_diag_val(0, -0.125);
+                A->set_diag_val(1, -0.125);
+                A->set_diag_val(2, -0.125);
+                A->set_diag_val(3,  1.0);
+                A->set_diag_val(4, -0.125);
+                A->set_diag_val(5, -0.125);
+                A->set_diag_val(6, -0.125);
             }
             else if (A->num_diag == 19) {
                 //                             A->set_diag_val(0, -1.0);
@@ -207,7 +207,7 @@ int main(int argc, char ** argv)
             else if (strstr(prc_name.c_str(), "B")) type = BACKWARD;
             else if (strstr(prc_name.c_str(), "S")) type = SYMMETRIC;
             if (my_pid == 0) printf("  using \033[1;35mpointwise-GS %d\033[0m as preconditioner\n", type);
-            precond = new PointGS<IDX_TYPE, PC_TYPE, KSP_TYPE>(type);
+            precond = new PointGS<IDX_TYPE, PC_DATA_TYPE, KSP_TYPE, PC_CALC_TYPE>(type);
         // } else if (strstr(prc_name.c_str(), "LGS")) {
         //     SCAN_TYPE type = SYMMETRIC;
         //     if      (strstr(prc_name.c_str(), "F")) type = FORWARD;
@@ -232,7 +232,7 @@ int main(int argc, char ** argv)
                 rel_types.push_back(trans_smth[argv[cnt++]]);
                 // if (my_pid == 0) printf("i %d type %d\n", i, rel_types[i]);
             }
-            precond = new GeometricMultiGrid<IDX_TYPE, PC_TYPE, KSP_TYPE>
+            precond = new GeometricMultiGrid<IDX_TYPE, PC_DATA_TYPE, KSP_TYPE, PC_CALC_TYPE>
                 (num_discrete, num_Galerkin, {}, rel_types);
         // } else if (strstr(prc_name.c_str(), "BILU")) {
         //     BlockILU_type type_3d = ILU_3D27;
@@ -253,25 +253,27 @@ int main(int argc, char ** argv)
             if (my_pid == 0) printf("NO preconditioner was set.\n");
         }
         
+        if (prc_name == "GMG" && sizeof(PC_DATA_TYPE)==2) {
+            ((GeometricMultiGrid<IDX_TYPE, PC_DATA_TYPE, KSP_TYPE, PC_CALC_TYPE>*)precond)->scale_before_setup_smoothers = true;
+        }
 
-        if (its_name == "GCR") {
-            solver = new GCRSolver<IDX_TYPE, KSP_TYPE, PC_TYPE>;
-            ((GCRSolver<IDX_TYPE, KSP_TYPE, PC_TYPE>*)solver)->SetInnerIterMax(restart);
-        } else if (its_name == "CG") {
-            solver = new CGSolver<IDX_TYPE, KSP_TYPE, PC_TYPE>();
-        } else if (its_name == "GMRES") {
-            solver = new GMRESSolver<IDX_TYPE, KSP_TYPE, PC_TYPE>();
-            ((GMRESSolver<IDX_TYPE, KSP_TYPE, PC_TYPE>*)solver)->SetRestartlen(restart);
+        // if (its_name == "GCR") {
+        //     solver = new GCRSolver<IDX_TYPE, KSP_TYPE, PC_TYPE>;
+        //     ((GCRSolver<IDX_TYPE, KSP_TYPE, PC_TYPE>*)solver)->SetInnerIterMax(restart);
+        // } else 
+        if (its_name == "CG") {
+            solver = new CGSolver<IDX_TYPE, PC_DATA_TYPE, PC_CALC_TYPE, KSP_TYPE>();
+        // } else if (its_name == "GMRES") {
+        //     solver = new GMRESSolver<IDX_TYPE, KSP_TYPE, PC_TYPE>();
+        //     ((GMRESSolver<IDX_TYPE, KSP_TYPE, PC_TYPE>*)solver)->SetRestartlen(restart);
         } else {
             if (my_pid == 0) printf("INVALID iterative solver name of %s\nOnly GCR, CG, GMRES, FGMRES available\n", its_name.c_str());
             MPI_Abort(MPI_COMM_WORLD, -1);
         }
 
-        if constexpr (PC_BIT==16) {
-            if (prc_name == "GMG") ((GeometricMultiGrid<IDX_TYPE, PC_TYPE, KSP_TYPE>*)precond)->scale_before_setup_smoothers = true;
-            else A->scale(1.0);
-        }
-        solver->SetMaxIter(200);
+        
+
+        solver->SetMaxIter(120);
         if (strcmp(case_name.c_str(), "GRAPES" ) == 0) {// 使用绝对残差
             if (its_name == "GCR") solver->SetAbsTol(1e-12);// 注意：这一版的GCR里用的是点积结果（不开根）判敛，实际是范数的平方
             else solver->SetAbsTol(1e-6);
@@ -515,9 +517,9 @@ int main(int argc, char ** argv)
 
         if (case_name == "LASER" && prc_name == "GMG") {
             assert(num_Galerkin >= 0);
-            PC_TYPE  wgts[num_Galerkin+1];
+            PC_DATA_TYPE  wgts[num_Galerkin+1];
             for (int i = 0; i < num_Galerkin+1; i++) wgts[i] = 1.2;
-            ((GeometricMultiGrid<IDX_TYPE, PC_TYPE, KSP_TYPE>*)precond)->SetRelaxWeights(wgts, num_Galerkin+1);
+            ((GeometricMultiGrid<IDX_TYPE, PC_DATA_TYPE, KSP_TYPE, PC_CALC_TYPE>*)precond)->SetRelaxWeights(wgts, num_Galerkin+1);
         }
 
         double t1 = wall_time();

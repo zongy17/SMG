@@ -248,8 +248,8 @@ public:
 #endif
 
 // 完全LU类中的data_t类型仅做摆设，实际存储和计算都用calc_t
-template<typename idx_t, typename data_t, typename calc_t>
-class DenseLU final : public Solver<idx_t, data_t, calc_t> {
+template<typename idx_t, typename data_t, typename setup_t, typename calc_t>
+class DenseLU final : public Solver<idx_t, data_t, setup_t, calc_t> {
 public:
     DenseLU_type type;
     idx_t num_stencil = 0;// 未初始化
@@ -258,7 +258,7 @@ public:
     double setup_time = 0.0;
 
     // operator (often as matrix-A)
-    const Operator<idx_t, calc_t, calc_t> * oper = nullptr;
+    const Operator<idx_t, setup_t, setup_t> * oper = nullptr;
     
     idx_t global_dof;
     calc_t * u_data = nullptr, * l_data = nullptr;
@@ -271,7 +271,7 @@ public:
     CSR_sparseMat<idx_t, calc_t, calc_t> * glbA_csr = nullptr;
 #endif
 
-    DenseLU(DenseLU_type type) : Solver<idx_t, data_t, calc_t>(), type(type) {
+    DenseLU(DenseLU_type type) : Solver<idx_t, data_t, setup_t, calc_t>(), type(type) {
         if (type == DenseLU_3D7) {
             num_stencil = 7;
             stencil_offset = stencil_offset_3d7;
@@ -300,7 +300,7 @@ public:
         if (glbA_csr != nullptr) {delete glbA_csr; glbA_csr = nullptr;}
 #endif
     }
-    void SetOperator(const Operator<idx_t, calc_t, calc_t> & op) {
+    void SetOperator(const Operator<idx_t, setup_t, setup_t> & op) {
         oper = & op;
 
         this->input_dim[0] = op.input_dim[0];
@@ -330,16 +330,16 @@ public:
     }
 };
 
-template<typename idx_t, typename data_t, typename calc_t>
-void DenseLU<idx_t, data_t, calc_t>::Setup()
+template<typename idx_t, typename data_t, typename setup_t, typename calc_t>
+void DenseLU<idx_t, data_t, setup_t, calc_t>::Setup()
 {
     if (setup_called) return ;
     setup_time = -wall_time();
 
     assert(this->oper != nullptr);
     // assert matrix has updated halo to prepare data 强制类型转换
-    const par_structMatrix<idx_t, calc_t, calc_t> & par_A = *((par_structMatrix<idx_t, calc_t, calc_t>*)(this->oper));
-    const seq_structMatrix<idx_t, calc_t, calc_t> & seq_A = *(par_A.local_matrix);// 外层问题的A矩阵
+    const par_structMatrix<idx_t, setup_t, setup_t> & par_A = *((par_structMatrix<idx_t, setup_t, setup_t>*)(this->oper));
+    const seq_structMatrix<idx_t, setup_t, setup_t> & seq_A = *(par_A.local_matrix);// 外层问题的A矩阵
     assert(seq_A.num_diag == num_stencil);
 
     // 先确定谁来做计算：0号进程来算
@@ -365,7 +365,7 @@ void DenseLU<idx_t, data_t, calc_t>::Setup()
 
     dense_x = new calc_t[global_dof];
     dense_b = new calc_t[global_dof];
-    calc_t * buf = new calc_t[global_dof * num_stencil];// 接收缓冲区：全局的稀疏结构化矩阵
+    setup_t * buf = new setup_t[global_dof * num_stencil];// 接收缓冲区：全局的稀疏结构化矩阵
 
     // 执行LU分解，并存储
     idx_t sizes[4], subsizes[4], starts[4];
@@ -377,6 +377,7 @@ void DenseLU<idx_t, data_t, calc_t>::Setup()
     MPI_Type_create_subarray(4, sizes, subsizes, starts, MPI_ORDER_C, par_A.comm_pkg->mpi_scalar_type, &mat_send_type);
     MPI_Type_commit(&mat_send_type);
     assert(sizeof(calc_t) == 8 || sizeof(calc_t) == 4);
+    assert(sizeof(setup_t) == 8 || sizeof(setup_t) == 4);
     MPI_Datatype vec_scalar_type = (sizeof(calc_t) == 8) ? MPI_DOUBLE : MPI_FLOAT;
     MPI_Type_create_subarray(3, sizes, subsizes, starts, MPI_ORDER_C, vec_scalar_type, &vec_send_type);
     MPI_Type_commit(&vec_send_type);
@@ -388,7 +389,7 @@ void DenseLU<idx_t, data_t, calc_t>::Setup()
     // starts[]数组改成从头开始，每次都手动指定displs
     starts[0] = starts[1] = starts[2] = 0;// starts[3] = 0
     MPI_Type_create_subarray(4, sizes, subsizes, starts, MPI_ORDER_C, par_A.comm_pkg->mpi_scalar_type, &tmp_type);
-    MPI_Type_create_resized(tmp_type, 0, subsizes[2] * sizes[3] * sizeof(calc_t), &mat_recv_type);
+    MPI_Type_create_resized(tmp_type, 0, subsizes[2] * sizes[3] * sizeof(setup_t), &mat_recv_type);
     MPI_Type_commit(&mat_recv_type);
     MPI_Type_create_subarray(3, sizes, subsizes, starts, MPI_ORDER_C, vec_scalar_type, &tmp_type);
     MPI_Type_create_resized(tmp_type, 0, subsizes[2]            * sizeof(calc_t), &vec_recv_type);
@@ -427,7 +428,7 @@ void DenseLU<idx_t, data_t, calc_t>::Setup()
     // 将结构化排布的稀疏矩阵转成CSR
     idx_t * row_ptr = new idx_t [global_dof+1];
     idx_t * col_idx = new idx_t [global_dof * num_stencil];// 按照最大的可能上限开辟
-    calc_t* vals    = new calc_t[global_dof * num_stencil];
+    setup_t * vals    = new setup_t[global_dof * num_stencil];
     int nnz_cnt = 0;
     row_ptr[0] = 0;// init
     for (idx_t j = 0; j < gy; j++)
@@ -456,9 +457,9 @@ void DenseLU<idx_t, data_t, calc_t>::Setup()
     setup_time += decomp_time;
     setup_time -= wall_time();
 #else
-    calc_t * dense_A = new calc_t[global_dof * global_dof];// 用于分解的稠密A矩阵
-    calc_t * L_high = new calc_t [global_dof * (global_dof - 1) / 2];
-    calc_t * U_high = new calc_t [global_dof * (global_dof + 1) / 2];
+    setup_t * dense_A = new setup_t[global_dof * global_dof];// 用于分解的稠密A矩阵
+    setup_t * L_high = new setup_t [global_dof * (global_dof - 1) / 2];
+    setup_t * U_high = new setup_t [global_dof * (global_dof + 1) / 2];
         // 将结构化排布的稀疏矩阵稠密化
         #pragma omp parallel for schedule(static)
         for (idx_t p = 0; p < global_dof * global_dof; p++)
@@ -494,16 +495,39 @@ void DenseLU<idx_t, data_t, calc_t>::Setup()
         // 执行分解
         dense_LU_decomp(dense_A, L_high, U_high, global_dof, global_dof);
         delete dense_A;
-    l_data = L_high;
-    u_data = U_high;
+    
+    if constexpr (sizeof(calc_t) == sizeof(setup_t)) {
+        l_data = L_high;
+        u_data = U_high;
+    } else {
+        if (my_pid == 0) {
+            printf("  \033[1;31mWarning\033[0m: LU::Setup() using setup_t of %ld bytes, but calc_t of %ld bytes\n",
+                sizeof(setup_t), sizeof(calc_t));
+        }
+        idx_t tot_len;
+        tot_len = global_dof * (global_dof - 1) / 2;
+        l_data = new calc_t [tot_len];
+        #pragma omp parallel for schedule(static)
+        for (idx_t i = 0; i < tot_len; i++)
+            l_data[i] = L_high[i];
+
+        tot_len = global_dof * (global_dof + 1) / 2;
+        u_data = new calc_t [tot_len];
+        #pragma omp parallel for schedule(static)
+        for (idx_t i = 0; i < tot_len; i++)
+            u_data[i] = U_high[i];
+        
+        delete L_high;
+        delete U_high;
+    }
 #endif
     delete buf;
     setup_called = true;
     setup_time += wall_time();
 }
 
-template<typename idx_t, typename data_t, typename calc_t>
-void DenseLU<idx_t, data_t, calc_t>::Mult(const par_structVector<idx_t, calc_t> & input, par_structVector<idx_t, calc_t> & output) const
+template<typename idx_t, typename data_t, typename setup_t, typename calc_t>
+void DenseLU<idx_t, data_t, setup_t, calc_t>::Mult(const par_structVector<idx_t, calc_t> & input, par_structVector<idx_t, calc_t> & output) const
 {
     CHECK_LOCAL_HALO( *(input.local_vector),  *(output.local_vector));// 检查相容性
     CHECK_OUTPUT_DIM(*this, input);// A * out = in
@@ -543,30 +567,30 @@ void DenseLU<idx_t, data_t, calc_t>::Mult(const par_structVector<idx_t, calc_t> 
     else {
         assert(false);
         // 先计算一遍残差
-        par_structVector<idx_t, calc_t> resi(input), error(output);
-        this->oper->Mult(output, resi, false);
-        vec_add(input, -1.0, resi, resi);
+        // par_structVector<idx_t, calc_t> resi(input), error(output);
+        // this->oper->Mult(output, resi, false);
+        // vec_add(input, -1.0, resi, resi);
 
-        MPI_Allgatherv(resi.local_vector->data, 1, vec_send_type, dense_x, sendrecv_cnt, displs, vec_recv_type, input.comm_pkg->cart_comm);
+        // MPI_Allgatherv(resi.local_vector->data, 1, vec_send_type, dense_x, sendrecv_cnt, displs, vec_recv_type, input.comm_pkg->cart_comm);
 
-            dense_forward (l_data, dense_x, dense_b, global_dof, global_dof);// 前代
-            dense_backward(u_data, dense_b, dense_x, global_dof, global_dof);// 回代
+        //     dense_forward (l_data, dense_x, dense_b, global_dof, global_dof);// 前代
+        //     dense_backward(u_data, dense_b, dense_x, global_dof, global_dof);// 回代
 
-        {// 从dense_x中拷回到向量中
-            seq_structVector<idx_t, calc_t> & vec = *(error.local_vector);
-            const idx_t ox = error.offset_x     , oy = error.offset_y, oz = error.offset_z     ;
-            const idx_t gx = error.global_size_x,                      gz = error.global_size_z;
-            const idx_t lx = vec.local_x        , ly = vec.local_y   , lz = vec.local_z        ;
-            const idx_t hx = vec.halo_x         , hy = vec.halo_y    , hz = vec.halo_z         ;
-            const idx_t vec_ki_size = vec.slice_ki_size, vec_k_size = vec.slice_k_size;
-            for (idx_t j = 0; j < ly; j++)
-            for (idx_t i = 0; i < lx; i++)
-            for (idx_t k = 0; k < lz; k++) {
-                vec.data[(j + hy) * vec_ki_size + (i + hx) * vec_k_size + k + hz] = dense_x[((j + oy) * gx + (i + ox)) * gz + k + oz];
-            }
-        }
+        // {// 从dense_x中拷回到向量中
+        //     seq_structVector<idx_t, calc_t> & vec = *(error.local_vector);
+        //     const idx_t ox = error.offset_x     , oy = error.offset_y, oz = error.offset_z     ;
+        //     const idx_t gx = error.global_size_x,                      gz = error.global_size_z;
+        //     const idx_t lx = vec.local_x        , ly = vec.local_y   , lz = vec.local_z        ;
+        //     const idx_t hx = vec.halo_x         , hy = vec.halo_y    , hz = vec.halo_z         ;
+        //     const idx_t vec_ki_size = vec.slice_ki_size, vec_k_size = vec.slice_k_size;
+        //     for (idx_t j = 0; j < ly; j++)
+        //     for (idx_t i = 0; i < lx; i++)
+        //     for (idx_t k = 0; k < lz; k++) {
+        //         vec.data[(j + hy) * vec_ki_size + (i + hx) * vec_k_size + k + hz] = dense_x[((j + oy) * gx + (i + ox)) * gz + k + oz];
+        //     }
+        // }
     
-        vec_add(output, this->weight, error, output);
+        // vec_add(output, this->weight, error, output);
     }
 }
 
