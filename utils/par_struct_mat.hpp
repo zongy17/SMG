@@ -458,12 +458,15 @@ void par_structMatrix<idx_t, data_t, calc_t>::read_data(const std::string pathna
         MPI_File_read_all(fh, buf, tot_len, etype, &status);
         for (idx_t j = 0; j < ly; j++)
         for (idx_t i = 0; i < lx; i++)
-        for (idx_t k = 0; k < lz; k++)
-            A_local.data[idiag +
+        for (idx_t k = 0; k < lz; k++) {
+            const long long src_id =  k + lz * (i + lx * (long long)j);
+            const long long tgt_id =  idiag +
                         (k + A_local.halo_z) * A_local.num_diag + 
                         (i + A_local.halo_x) * A_local.slice_dk_size +
-                        (j + A_local.halo_y) * A_local.slice_dki_size]
-                    = ((data_t *)buf)[k + lz * (i + lx * j)];// other
+                        ((long long)j + A_local.halo_y) * A_local.slice_dki_size;
+            A_local.data[tgt_id]
+                    = ((data_t *)buf)[src_id];// other
+        }
         MPI_File_close(&fh);
     }
     free(buf);
@@ -959,73 +962,148 @@ bool par_structMatrix<idx_t, data_t, calc_t>::check_scaling(const data_t scaled_
 
 }
 
+#include <climits>
 template<typename idx_t, typename data_t, typename calc_t>
 void par_structMatrix<idx_t, data_t, calc_t>::write_CSR_bin(const std::string pathname) const {
-    int num_proc; MPI_Comm_size(comm_pkg->cart_comm, &num_proc);
-    assert(num_proc == 1);
+    assert( comm_pkg->ngbs_pid[I_L] == MPI_PROC_NULL && comm_pkg->ngbs_pid[I_U] == MPI_PROC_NULL &&
+            comm_pkg->ngbs_pid[K_L] == MPI_PROC_NULL && comm_pkg->ngbs_pid[K_U] == MPI_PROC_NULL );// 只能最外维的y方向上有进程划分
     if (strstr(pathname.c_str(), "GRAPES")) assert(sizeof(data_t) == 4);
     else                                    assert(sizeof(data_t) == 8); 
-    assert(sizeof(idx_t)  == 4);// int only
     assert(this->input_dim[0] == this->output_dim[0] && this->input_dim[1] == this->output_dim[1] && this->input_dim[2] == this->output_dim[2]);
 
     const idx_t gx = this->input_dim[0], gy = this->input_dim[1], gz = this->input_dim[2];
-    const idx_t nrows = gx * gy * gz;
+    assert(gx == local_matrix->local_x && gz == local_matrix->local_z);
+    const long long glb_nrows = gx * gy * gz;
+    const long long beg_row_idx = gx * offset_y * gz;
+    const long long loc_nrows = gx * local_matrix->local_y * gz;
 
-    std::vector<idx_t> row_ptr(nrows + 1, 0);
-    std::vector<idx_t> col_idx;
-    std::vector<data_t> vals;
-    const idx_t jbeg = local_matrix->halo_y, jend = jbeg + local_matrix->local_y,
+    const long long jbeg = local_matrix->halo_y, jend = jbeg + local_matrix->local_y,
                 ibeg = local_matrix->halo_x, iend = ibeg + local_matrix->local_x,
                 kbeg = local_matrix->halo_z, kend = kbeg + local_matrix->local_z;
-    for (idx_t j = jbeg; j < jend; j++)
-    for (idx_t i = ibeg; i < iend; i++)
-    for (idx_t k = kbeg; k < kend; k++) {
-        idx_t row_idx = ((j-jbeg)*gx + i-ibeg)*gz + k-kbeg; assert(row_idx < nrows);
-        for (idx_t d = 0; d < num_diag; d++) {
-            const idx_t ngb_j = j + this->stencil[d*3  ],
-                        ngb_i = i + this->stencil[d*3+1],
-                        ngb_k = k + this->stencil[d*3+2];
-            if (ngb_j < jbeg || ngb_j >= jend ||
-                ngb_i < ibeg || ngb_i >= iend ||
-                ngb_k < kbeg || ngb_k >= kend   ) continue;
-            idx_t ngb_row_idx = ((ngb_j-jbeg)*gx + ngb_i-ibeg)*gz + ngb_k-kbeg; assert(ngb_row_idx < nrows);
-            data_t val = local_matrix->data[
-                        j * local_matrix->slice_dki_size
-                    +   i * local_matrix->slice_dk_size
-                    +   k * local_matrix->num_diag
-                    +   d];
-            if (val != 0.0) {// 非零元
-                row_ptr[row_idx+1] ++;
-                col_idx.push_back(ngb_row_idx);
-                vals.push_back(val);
+    const bool x_lbdr = comm_pkg->ngbs_pid[I_L] == MPI_PROC_NULL, x_ubdr = comm_pkg->ngbs_pid[I_U] == MPI_PROC_NULL;
+    const bool y_lbdr = comm_pkg->ngbs_pid[J_L] == MPI_PROC_NULL, y_ubdr = comm_pkg->ngbs_pid[J_U] == MPI_PROC_NULL;
+    const bool z_lbdr = comm_pkg->ngbs_pid[K_L] == MPI_PROC_NULL, z_ubdr = comm_pkg->ngbs_pid[K_U] == MPI_PROC_NULL;
+
+    if (glb_nrows * num_diag <= INT_MAX - 10) {
+        assert(sizeof(idx_t)  == 4);
+        std::vector<int> row_ptr(loc_nrows + 1, 0);
+        std::vector<int> col_idx;
+        std::vector<data_t> vals;
+        std::string filename;
+        FILE * fp = nullptr;
+        size_t size = 0;
+
+        for (int j = jbeg; j < jend; j++)
+        for (int i = ibeg; i < iend; i++)
+        for (int k = kbeg; k < kend; k++) {
+            int loc_row_idx = ((j-jbeg)*gx + i-ibeg)*gz + k-kbeg; assert(loc_row_idx < loc_nrows);// 局部的行序号
+            for (int d = 0; d < num_diag; d++) {
+                const int ngb_j = j + this->stencil[d*3  ],
+                            ngb_i = i + this->stencil[d*3+1],
+                            ngb_k = k + this->stencil[d*3+2];
+                if ( (ngb_j < jbeg && y_lbdr) || (ngb_j >= jend && y_ubdr) ||
+                        (ngb_i < ibeg && x_lbdr) || (ngb_i >= iend && x_ubdr) ||
+                        (ngb_k < kbeg && z_lbdr) || (ngb_k >= kend && z_ubdr)  ) continue;
+                int loc_ngb_row_idx = ((ngb_j-jbeg)*gx + ngb_i-ibeg)*gz + ngb_k-kbeg;
+                int glb_ngb_row_idx = loc_ngb_row_idx + beg_row_idx;// 全局的列序号
+                assert(glb_ngb_row_idx < glb_nrows);
+                data_t val = local_matrix->data[
+                            j * local_matrix->slice_dki_size
+                        +   i * local_matrix->slice_dk_size
+                        +   k * local_matrix->num_diag
+                        +   d];
+                if (val != 0.0) {// 非零元
+                    row_ptr[loc_row_idx+1] ++;
+                    col_idx.push_back(glb_ngb_row_idx);
+                    vals.push_back(val);
+                }
             }
         }
+        for (int i = 0; i < loc_nrows; i++)
+            row_ptr[i+1] += row_ptr[i];
+        assert(row_ptr[0] == 0);
+        assert(row_ptr[loc_nrows] == col_idx.size());
+        assert(row_ptr[loc_nrows] == vals.size());
+
+        int my_pid; MPI_Comm_rank(MPI_COMM_WORLD, &my_pid);
+        filename = pathname + "/Ai.bin." + std::to_string(my_pid);
+        printf("writing to %s...\n", filename.c_str());
+        fp = fopen(filename.c_str(), "wb");
+        size = fwrite(row_ptr.data(), sizeof(int), loc_nrows + 1, fp); assert(size == row_ptr.size());
+        fclose(fp);
+
+        filename = pathname + "/Aj.bin." + std::to_string(my_pid);
+        printf("writing to %s...\n", filename.c_str());
+        fp = fopen(filename.c_str(), "wb");
+        size = fwrite(col_idx.data(), sizeof(int), row_ptr[loc_nrows], fp); assert(size == col_idx.size());
+        fclose(fp);
+
+        filename = pathname + "/Av.bin." + std::to_string(my_pid);
+        printf("writing to %s...\n", filename.c_str());
+        fp = fopen(filename.c_str(), "wb");
+        size = fwrite(vals.data()   , sizeof(data_t),row_ptr[loc_nrows], fp); assert(size == vals.size());
+        fclose(fp);
+    }
+    else {
+        std::vector<long long> row_ptr(loc_nrows + 1, 0);
+        std::vector<long long> col_idx;
+        std::vector<data_t> vals;
+        std::string filename;
+        FILE * fp = nullptr;
+        size_t size = 0;
+
+        for (long long j = jbeg; j < jend; j++)
+        for (long long i = ibeg; i < iend; i++)
+        for (long long k = kbeg; k < kend; k++) {
+            long long loc_row_idx = ((j-jbeg)*gx + i-ibeg)*gz + k-kbeg; assert(loc_row_idx < loc_nrows);// 局部的行序号
+            for (long long d = 0; d < num_diag; d++) {
+                const long long ngb_j = j + this->stencil[d*3  ],
+                            ngb_i = i + this->stencil[d*3+1],
+                            ngb_k = k + this->stencil[d*3+2];
+                if ( (ngb_j < jbeg && y_lbdr) || (ngb_j >= jend && y_ubdr) ||
+                        (ngb_i < ibeg && x_lbdr) || (ngb_i >= iend && x_ubdr) ||
+                        (ngb_k < kbeg && z_lbdr) || (ngb_k >= kend && z_ubdr)  ) continue;
+                long long loc_ngb_row_idx = ((ngb_j-jbeg)*gx + ngb_i-ibeg)*gz + ngb_k-kbeg;
+                long long glb_ngb_row_idx = loc_ngb_row_idx + beg_row_idx;// 全局的列序号
+                assert(glb_ngb_row_idx < glb_nrows);
+                data_t val = local_matrix->data[
+                            j * local_matrix->slice_dki_size
+                        +   i * local_matrix->slice_dk_size
+                        +   k * local_matrix->num_diag
+                        +   d];
+                if (val != 0.0) {// 非零元
+                    row_ptr[loc_row_idx+1] ++;
+                    col_idx.push_back(glb_ngb_row_idx);
+                    vals.push_back(val);
+                }
+            }
+        }
+        for (long long i = 0; i < loc_nrows; i++)
+            row_ptr[i+1] += row_ptr[i];
+        assert(row_ptr[0] == 0);
+        assert(row_ptr[loc_nrows] == col_idx.size());
+        assert(row_ptr[loc_nrows] == vals.size());
+
+        int my_pid; MPI_Comm_rank(MPI_COMM_WORLD, &my_pid);
+        filename = pathname + "/Ai.bin." + std::to_string(my_pid);
+        printf("writing to %s...\n", filename.c_str());
+        fp = fopen(filename.c_str(), "wb");
+        size = fwrite(row_ptr.data(), sizeof(long long), loc_nrows + 1, fp); assert(size == row_ptr.size());
+        fclose(fp);
+
+        filename = pathname + "/Aj.bin." + std::to_string(my_pid);
+        printf("writing to %s...\n", filename.c_str());
+        fp = fopen(filename.c_str(), "wb");
+        size = fwrite(col_idx.data(), sizeof(long long), row_ptr[loc_nrows], fp); assert(size == col_idx.size());
+        fclose(fp);
+
+        filename = pathname + "/Av.bin." + std::to_string(my_pid);
+        printf("writing to %s...\n", filename.c_str());
+        fp = fopen(filename.c_str(), "wb");
+        size = fwrite(vals.data()   , sizeof(data_t),row_ptr[loc_nrows], fp); assert(size == vals.size());
+        fclose(fp);
     }
     
-    for (idx_t i = 0; i < nrows; i++)
-        row_ptr[i+1] += row_ptr[i];
-    assert(row_ptr[0] == 0);
-    assert(row_ptr[nrows] == col_idx.size());
-    assert(row_ptr[nrows] == vals.size());
-
-    std::string filename;
-    filename = pathname + "/Ai.bin";
-    printf("writing to %s...\n", filename.c_str());
-    FILE * fp = fopen(filename.c_str(), "wb");
-    size_t size = fwrite(row_ptr.data(), sizeof(idx_t), nrows + 1, fp); assert(size == row_ptr.size());
-    fclose(fp);
-
-    filename = pathname + "/Aj.bin";
-    printf("writing to %s...\n", filename.c_str());
-    fp = fopen(filename.c_str(), "wb");
-    size = fwrite(col_idx.data(), sizeof(idx_t), row_ptr[nrows], fp); assert(size == col_idx.size());
-    fclose(fp);
-
-    filename = pathname + "/Av.bin";
-    printf("writing to %s...\n", filename.c_str());
-    fp = fopen(filename.c_str(), "wb");
-    size = fwrite(vals.data()   , sizeof(data_t),row_ptr[nrows], fp); assert(size == vals.size());
-    fclose(fp);
 }
 
 template<typename idx_t, typename data_t, typename calc_t>

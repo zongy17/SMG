@@ -96,7 +96,7 @@ template<typename idx_t, typename data_t>
 seq_structVector<idx_t, data_t>::seq_structVector(idx_t lx, idx_t ly, idx_t lz, idx_t hx, idx_t hy, idx_t hz)
     : local_x(lx), local_y(ly), local_z(lz), halo_x(hx), halo_y(hy), halo_z(hz)
 {
-    idx_t   tot_x = local_x + 2 * halo_x,
+    long long tot_x = local_x + 2 * halo_x,
             tot_y = local_y + 2 * halo_y,
             tot_z = local_z + 2 * halo_z;
     data = new data_t[tot_x * tot_y * tot_z];
@@ -113,7 +113,7 @@ seq_structVector<idx_t, data_t>::seq_structVector(const seq_structVector & model
       halo_x (model.halo_x) , halo_y (model.halo_y ), halo_z (model.halo_z) , 
       slice_k_size(model.slice_k_size), slice_ki_size(model.slice_ki_size)
 {
-    idx_t   tot_x = local_x + 2 * halo_x,
+    long long tot_x = local_x + 2 * halo_x,
             tot_y = local_y + 2 * halo_y,
             tot_z = local_z + 2 * halo_z;
     data = new data_t[tot_x * tot_y * tot_z];
@@ -380,8 +380,10 @@ template<typename idx_t, typename data_t, typename calc_t>
 seq_structMatrix<idx_t, data_t, calc_t>::seq_structMatrix(idx_t num_d, idx_t lx, idx_t ly, idx_t lz, idx_t hx, idx_t hy, idx_t hz)
     : num_diag(num_d), local_x(lx), local_y(ly), local_z(lz), halo_x(hx), halo_y(hy), halo_z(hz)
 {
-    idx_t tot = num_diag * (local_x + 2 * halo_x) * (local_y + 2 * halo_y) * (local_z + 2 * halo_z);
-    data = new data_t[tot];
+    long long tot_x = local_x + 2 * halo_x,
+            tot_y = local_y + 2 * halo_y,
+            tot_z = local_z + 2 * halo_z;
+    data = new data_t[num_diag * tot_x * tot_y * tot_z];
 #ifdef DEBUG
     for (idx_t i = 0; i < tot; i++) data[i] = -9999.9;
 #endif
@@ -403,8 +405,12 @@ seq_structMatrix<idx_t, data_t, calc_t>::seq_structMatrix(const seq_structMatrix
       halo_x (model.halo_x) , halo_y (model.halo_y ), halo_z (model.halo_z) , 
       slice_dk_size(model.slice_dk_size), slice_dki_size(model.slice_dki_size)
 {
-    idx_t tot = num_diag * (local_x + 2 * halo_x) * (local_y + 2 * halo_y) * (local_z + 2 * halo_z);
-    data = new data_t[tot];
+    long long tot_x = local_x + 2 * halo_x,
+            tot_y = local_y + 2 * halo_y,
+            tot_z = local_z + 2 * halo_z;
+    data = new data_t[num_diag * tot_x * tot_y * tot_z];
+    spmv = model.spmv;
+    spmv_scaled = model.spmv_scaled;
 }
 
 template<typename idx_t, typename data_t, typename calc_t>

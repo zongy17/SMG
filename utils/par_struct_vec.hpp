@@ -250,15 +250,16 @@ void par_structVector<idx_t, data_t>::set_val(const data_t val, bool halo_set) {
 
 template<typename idx_t, typename data_t>
 void par_structVector<idx_t, data_t>::write_CSR_bin(const std::string pathname, const std::string file) const {
-    int num_proc; MPI_Comm_size(comm_pkg->cart_comm, &num_proc);
-    assert(num_proc == 1);
+    assert( comm_pkg->ngbs_pid[I_L] == MPI_PROC_NULL && comm_pkg->ngbs_pid[I_U] == MPI_PROC_NULL &&
+            comm_pkg->ngbs_pid[K_L] == MPI_PROC_NULL && comm_pkg->ngbs_pid[K_U] == MPI_PROC_NULL );// 只能最外维的y方向上有进程划分
     if (strstr(pathname.c_str(), "GRAPES")) assert(sizeof(data_t) == 4);
     else                                    assert(sizeof(data_t) == 8); 
     assert(sizeof(idx_t)  == 4);// int only
 
     const idx_t & gx = global_size_x, & gy = global_size_y, & gz = global_size_z;
-    const idx_t nrows = gx * gy * gz;
-    size_t bytes = nrows * sizeof(data_t);
+    assert(gx == local_vector->local_x && gz == local_vector->local_z);
+    const idx_t loc_nrows = gx * local_vector->local_y * gz;
+    size_t bytes = loc_nrows * sizeof(data_t);
     void * vec_vals = malloc(bytes);
 
     const idx_t jbeg = local_vector->halo_y, jend = jbeg + local_vector->local_y,
@@ -268,15 +269,16 @@ void par_structVector<idx_t, data_t>::write_CSR_bin(const std::string pathname, 
     for (idx_t j = jbeg; j < jend; j++)
     for (idx_t i = ibeg; i < iend; i++)
     for (idx_t k = kbeg; k < kend; k++) {
-        idx_t row_idx = ((j-jbeg)*gx + i-ibeg)*gz + k-kbeg;
-        assert(row_idx < nrows);
-        ((data_t *)vec_vals)[row_idx] 
+        idx_t loc_row_idx = ((j-jbeg)*gx + i-ibeg)*gz + k-kbeg;
+        assert(loc_row_idx < loc_nrows);
+        ((data_t *)vec_vals)[loc_row_idx] 
             = local_vector->data[j * local_vector->slice_ki_size + i * local_vector->slice_k_size + k];
     }
-    const std::string filename = pathname + "/" + file;
+    int my_pid; MPI_Comm_rank(MPI_COMM_WORLD, &my_pid);
+    const std::string filename = pathname + "/" + file + "." + std::to_string(my_pid);
     printf("writing to %s\n", filename.c_str());
     FILE * fp = fopen(filename.c_str(), "wb");
-    int size = fwrite(vec_vals, sizeof(data_t), nrows, fp); assert(size == nrows);
+    int size = fwrite(vec_vals, sizeof(data_t), loc_nrows, fp); assert(size == loc_nrows);
     fclose(fp);
     free(vec_vals);
 }

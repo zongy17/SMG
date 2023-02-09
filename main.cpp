@@ -153,7 +153,7 @@ int main(int argc, char ** argv)
             // if (strcmp(case_name.c_str(), "GRAPES" ) == 0) x->read_data(pathname, "array_x");
             A->read_data(pathname);
         }
-        
+
         double fine_dot = vec_dot<IDX_TYPE, KSP_TYPE, double>(*b, *b);
         if (my_pid == 0) printf(" (b , b ) = %.27e\n", fine_dot);
         fine_dot = vec_dot<IDX_TYPE, KSP_TYPE, double>(*x, *x);
@@ -190,9 +190,9 @@ int main(int argc, char ** argv)
         A->write_struct_AOS_bin(pathname, "mat.AOS.bin");
         b->write_data(pathname, "b.AOS.bin");
         x->write_data(pathname, "x.AOS.bin");
-        A->write_CSR_bin(pathname);
-        b->write_CSR_bin(pathname, "b.bin");
-        x->write_CSR_bin(pathname, "x0.bin");
+        // A->write_CSR_bin(pathname);
+        // b->write_CSR_bin(pathname, "b.bin");
+        // x->write_CSR_bin(pathname, "x0.bin");
 #endif
         
 #if KSP_BIT==64 && PC_BIT==32
