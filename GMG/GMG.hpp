@@ -290,7 +290,6 @@ void GeometricMultiGrid<idx_t, data_t, calc_t>::Setup(const par_structMatrix<idx
 
     if (scale_before_setup_smoothers) {
         if (my_pid == 0) printf("\033[1;35mScale after RAP before setup smoothers\033[0m\n");
-        assert(A_problem.num_diag == 7);
         // 各层矩阵做scaling
         for (idx_t i = 0; i < num_levs; i++) {
             if (relax_types[i] != GaussElim)
@@ -315,6 +314,18 @@ void GeometricMultiGrid<idx_t, data_t, calc_t>::Setup(const par_structMatrix<idx
                 const   seq_structMatrix<idx_t, calc_t, calc_t> & src_h = *(A_array_high[i]->local_matrix);
                 // 当SpMV需要转换精度时，换成SOA来
                 A_array_low[i]->separate_truncate_Diags(src_h);
+                if (A_array_high[i]->scaled) {// 拷贝度量矩阵
+                    A_array_low[i]->scaled = true;
+                    A_array_low[i]->sqrt_D = new seq_structVector<idx_t, calc_t>(*(A_array_high[i]->sqrt_D));
+                    const idx_t tot_len = (A_array_high[i]->sqrt_D->local_x + A_array_high[i]->sqrt_D->halo_x * 2)
+                                        * (A_array_high[i]->sqrt_D->local_y + A_array_high[i]->sqrt_D->halo_y * 2)
+                                        * (A_array_high[i]->sqrt_D->local_z + A_array_high[i]->sqrt_D->halo_z * 2);
+                    const calc_t * src_data = A_array_high[i]->sqrt_D->data;
+                    calc_t * dst_data = A_array_low[i]->sqrt_D->data;
+                    #pragma omp parallel for schedule(static)
+                    for (idx_t p = 0; p < tot_len; p++)
+                        dst_data[p] = src_data[p];
+                }
             // }
         }
     }

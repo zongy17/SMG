@@ -253,7 +253,7 @@ void inline AOS_point_backward_ALL_3d7_scaled(const idx_t num,
 template<typename idx_t, typename data_t, typename calc_t>
 void inline AOS_line_forward_zero_3d7(const idx_t num,
     const idx_t vec_k_size, const idx_t vec_ki_size,
-    const data_t * L_jik, const data_t * dummy, const calc_t * b_jik, const calc_t * x_jik, calc_t * rhs)
+    const data_t * L_jik, const data_t * dummy, const calc_t * b_jik, const calc_t * x_jik, const calc_t * sqD_jik, calc_t * rhs)
 {
     const calc_t * x_jNi   = x_jik   - vec_ki_size;
     for (idx_t k = 0; k < num; k++) {
@@ -268,7 +268,7 @@ void inline AOS_line_forward_zero_3d7(const idx_t num,
 template<typename idx_t, typename data_t, typename calc_t>
 void inline AOS_line_backward_zero_3d7(const idx_t num,
     const idx_t vec_k_size, const idx_t vec_ki_size,
-    const data_t * dummy, const data_t * U_jik, const calc_t * b_jik, const calc_t * x_jik, calc_t * rhs)
+    const data_t * dummy, const data_t * U_jik, const calc_t * b_jik, const calc_t * x_jik, const calc_t * sqD_jik, calc_t * rhs)
 {
     const calc_t * x_jPi   = x_jik   + vec_ki_size;
     for (idx_t k = 0; k < num; k++) {
@@ -283,7 +283,7 @@ void inline AOS_line_backward_zero_3d7(const idx_t num,
 template<typename idx_t, typename data_t, typename calc_t>
 void inline AOS_line_ALL_3d7(const idx_t num,
     const idx_t vec_k_size, const idx_t vec_ki_size,
-    const data_t * L_jik, const data_t * U_jik, const calc_t * b_jik, const calc_t * x_jik, calc_t * rhs)
+    const data_t * L_jik, const data_t * U_jik, const calc_t * b_jik, const calc_t * x_jik, const calc_t * sqD_jik, calc_t * rhs)
 {
     const calc_t * x_jNi   = x_jik   - vec_ki_size, * x_jPi   = x_jik   + vec_ki_size;
     for (idx_t k = 0; k < num; k++) {
@@ -348,7 +348,7 @@ void inline AOS_ilu_backward_zero_3d7(const idx_t dim_2, const idx_t dim_1,
 // ============================ SPMV =================================
 void inline SOA_spmv_3d7_Cal32Stg16(const int num,
     const int vec_k_size , const int vec_ki_size,
-    const __fp16 * Diags[2], const float * x3, float * y_jik)
+    const __fp16 * Diags[2], const float * x3, float * y_jik, const float * sqD_jik)
 {
     const __fp16* A0_3 = Diags[0],// 0 ~ 3
                 * A4_6 = Diags[1];
@@ -1142,7 +1142,7 @@ void inline SOA_point_backward_ALL_3d7_Cal32Stg16_scaled(const int num,
 // ============================ LGS ===================================
 void inline SOA_line_forward_zero_3d7_Cal32Stg16(const int num,
     const int vec_k_size, const int vec_ki_size,
-    const __fp16 * Diags[1], const float * b3, const float * x3, float * rhs)
+    const __fp16 * Diags[1], const float * b3, const float * x3, const float * sqD3, float * rhs)
 {// (0,1)
     const __fp16* A0_1 = Diags[0];
     const float * x0 = x3 - vec_ki_size,
@@ -1188,7 +1188,7 @@ void inline SOA_line_forward_zero_3d7_Cal32Stg16(const int num,
 
 void inline SOA_line_forward_ALL_3d7_Cal32Stg16(const int num,
     const int vec_k_size, const int vec_ki_size,
-    const __fp16 * Diags[2], const float * b3, const float * x3, float * rhs)
+    const __fp16 * Diags[2], const float * b3, const float * x3, const float * sqD3, float * rhs)
 {// (0,1) (5,6)
     const __fp16* A0_1 = Diags[0], * A5_6 = Diags[1];
     const float * x0 = x3 - vec_ki_size, * x6 = x3 + vec_ki_size,
@@ -1251,7 +1251,7 @@ void inline SOA_line_forward_ALL_3d7_Cal32Stg16(const int num,
 
 void inline SOA_line_backward_ALL_3d7_Cal32Stg16(const int num,
     const int vec_k_size, const int vec_ki_size,
-    const __fp16 * Diags[2], const float * b3, const float * x3, float * rhs)
+    const __fp16 * Diags[2], const float * b3, const float * x3, const float * sqD3, float * rhs)
 {// (0,1) (5,6)
     const __fp16* A0_1 = Diags[0], * A5_6 = Diags[1];
     const float * x0 = x3 - vec_ki_size, * x6 = x3 + vec_ki_size,
@@ -1468,101 +1468,6 @@ void inline SOA_ilu_backward_zero_3d7_Cal32Stg16(const int dim_2, const int dim_
     }
 }
 
-
-template<typename idx_t, typename data_t>
-void inline SOA_spmv_3d7(const idx_t num,
-    const idx_t vec_k_size , const idx_t vec_ki_size,
-    const data_t * A_jik[7], const data_t * x_jik, data_t * y_jik)
-{
-    // 要打桩查一下是否生成了向量化代码！！！！
-    const data_t* x0 = x_jik - vec_ki_size, * x6 = x_jik + vec_ki_size,
-                * x1 = x_jik - vec_k_size,  * x5 = x_jik + vec_k_size,
-                * x2 = x_jik - 1, * x4 = x_jik + 1;
-    const data_t* A0 = A_jik[0], * A1 = A_jik[1], * A2 = A_jik[2], * A3 = A_jik[3],
-                * A4 = A_jik[4], * A5 = A_jik[5], * A6 = A_jik[6];
-    #pragma GCC unroll (4)
-    for (idx_t k = 0; k < num; k++) {
-        y_jik[k]= A0[k] * x0[k]
-                + A1[k] * x1[k]
-                + A2[k] * x2[k]
-                + A3[k] * x_jik[k]
-                + A4[k] * x4[k]
-                + A5[k] * x5[k]
-                + A6[k] * x6[k];
-    }
-}
-
-template<typename idx_t, typename data_t>
-void inline SOA_forward_zero_3d7(const idx_t num, 
-    const idx_t vec_k_size , const idx_t vec_ki_size, const data_t wgt,
-    const data_t * A_jik[4], const data_t * b_jik, data_t * x_jik)
-{
-    const data_t* A0 = A_jik[0], * A1 = A_jik[1], * A2 = A_jik[2], * A3 = A_jik[3];
-    for (idx_t k = 0; k < num; k++) {
-        data_t tmp =  A0[k] * x_jik[k - vec_ki_size]
-                    + A1[k] * x_jik[k - vec_k_size]
-                    + A2[k] * x_jik[k - 1];
-        x_jik[k] = wgt * (b_jik[k] - tmp) / A3[k];
-    }
-}
-
-template<typename idx_t, typename data_t>
-void inline SOA_forward_zero_3d7_scaled(const idx_t num, 
-    const idx_t vec_k_size , const idx_t vec_ki_size, const data_t wgt,
-    const data_t * A_jik[4], const data_t * b_jik, data_t * x_jik, const data_t * sqD_jik)
-{
-    const data_t* x0 = x_jik - vec_ki_size,
-                * x1 = x_jik - vec_k_size, * x2 = x_jik - 1;
-    const data_t* sqD0 = sqD_jik - vec_ki_size,
-                * sqD1 = sqD_jik - vec_k_size, * sqD2 = sqD_jik - 1;
-    const data_t* A0 = A_jik[0], * A1 = A_jik[1], * A2 = A_jik[2], * A3 = A_jik[3];
-    for (idx_t k = 0; k < num; k++) {
-        data_t diag_val = A3[k] * sqD_jik[k] * sqD_jik[k];
-        data_t tmp =  A0[k] * x0[k] * sqD0[k] + A1[k] * x1[k] * sqD1[k] + A2[k] * x2[k] * sqD2[k];
-        x_jik[k] = wgt * (b_jik[k] - tmp * sqD_jik[k]) / diag_val;
-    }
-}
-
-template<typename idx_t, typename data_t, int stride>
-void inline SOA_ALL_3d7(const idx_t num, 
-    const idx_t vec_k_size , const idx_t vec_ki_size, const data_t wgt,
-    const data_t * A_jik[7], const data_t * b_jik, data_t * x_jik)
-{
-    const data_t* A0 = A_jik[0], * A1 = A_jik[1], * A2 = A_jik[2], * A3 = A_jik[3],
-                * A4 = A_jik[4], * A5 = A_jik[5], * A6 = A_jik[6];
-    const data_t one_minus_wgt = 1.0 - wgt;
-    for (idx_t k = 0; k < num; k += stride) {
-        data_t tmp =  A0[k] * x_jik[k - vec_ki_size]
-                    + A1[k] * x_jik[k - vec_k_size]
-                    + A2[k] * x_jik[k - 1]
-                    + A4[k] * x_jik[k + 1]
-                    + A5[k] * x_jik[k + vec_k_size]
-                    + A6[k] * x_jik[k + vec_ki_size];
-        x_jik[k] = one_minus_wgt * x_jik[k] + wgt * (b_jik[k] - tmp) / A3[k];
-    }
-}
-
-template<typename idx_t, typename data_t, int stride>
-void inline SOA_ALL_3d7_scaled(const idx_t num, 
-    const idx_t vec_k_size , const idx_t vec_ki_size, const data_t wgt,
-    const data_t * A_jik[7], const data_t * b_jik, data_t * x_jik, const data_t * sqD_jik)
-{
-    const data_t* x0 = x_jik - vec_ki_size, * x6 = x_jik + vec_ki_size,
-                * x1 = x_jik - vec_k_size , * x5 = x_jik + vec_k_size,
-                * x2 = x_jik - 1          , * x4 = x_jik + 1;
-    const data_t* sqD0 = sqD_jik - vec_ki_size, * sqD6 = sqD_jik + vec_ki_size,
-                * sqD1 = sqD_jik - vec_k_size , * sqD5 = sqD_jik + vec_k_size,
-                * sqD2 = sqD_jik - 1          , * sqD4 = sqD_jik + 1;
-    const data_t* A0 = A_jik[0], * A1 = A_jik[1], * A2 = A_jik[2], * A3 = A_jik[3],
-                * A4 = A_jik[4], * A5 = A_jik[5], * A6 = A_jik[6];
-    const data_t one_minus_wgt = 1.0 - wgt;
-    for (idx_t k = 0; k < num; k += stride) {
-        data_t diag_val = A3[k] * sqD_jik[k] * sqD_jik[k];
-        data_t tmp = A0[k] * x0[k] * sqD0[k] + A1[k] * x1[k] * sqD1[k] + A2[k] * x2[k] * sqD2[k]
-                    +A4[k] * x4[k] * sqD4[k] + A5[k] * x5[k] * sqD5[k] + A6[k] * x6[k] * sqD6[k];
-        x_jik[k] = one_minus_wgt * x_jik[k] + wgt * (b_jik[k] - tmp * sqD_jik[k]) / diag_val;
-    }
-}
 #undef NEON_LEN
 #undef GROUP_LEN
 #endif

@@ -12,7 +12,7 @@ public:
     idx_t num_diag;
     idx_t offset_x     , offset_y     , offset_z     ;// 该矩阵在全局中的偏移
     bool scaled = false;
-    seq_structVector<idx_t, data_t> * sqrt_D = nullptr;
+    seq_structVector<idx_t, calc_t> * sqrt_D = nullptr;
 
     seq_structMatrix<idx_t, data_t, calc_t> * local_matrix;
 
@@ -21,7 +21,8 @@ public:
     mutable idx_t DiagGroups_cnt = 0;
     mutable seq_structMatrix<idx_t, data_t, calc_t> ** DiagGroups = nullptr;
     // spmv的函数指针
-    void (* SOA_spmv)(const idx_t, const idx_t, const idx_t, const data_t **, const calc_t *, calc_t *) = nullptr;
+    void (* SOA_spmv)(const idx_t, const idx_t, const idx_t, const data_t**, const calc_t*, calc_t*, const calc_t*) = nullptr;
+    void (* SOA_spmv_scaled)(const idx_t, const idx_t, const idx_t, const data_t**, const calc_t*, calc_t*, const calc_t*) = nullptr;
     const idx_t * stencil = nullptr;
 
     // 通信相关的
@@ -118,19 +119,28 @@ par_structMatrix<idx_t, data_t, calc_t>::par_structMatrix(MPI_Comm comm, idx_t n
     case 7:
         stencil = stencil_offset_3d7;
 #ifdef __aarch64__
-        if constexpr (sizeof(data_t) != sizeof(calc_t)) SOA_spmv = SOA_spmv_3d7_Cal32Stg16;
+        if constexpr (sizeof(data_t) != sizeof(calc_t)) {
+            SOA_spmv        = SOA_spmv_3d7_Cal32Stg16;
+            // SOA_spmv_scaled = SOA_spmv_
+        }
 #endif
         break;
     case 19:
         stencil = stencil_offset_3d19;
 #ifdef __aarch64__
-        if constexpr (sizeof(data_t) != sizeof(calc_t)) SOA_spmv = SOA_spmv_3d19_Cal32Stg16;
+        if constexpr (sizeof(data_t) != sizeof(calc_t)) {
+            SOA_spmv        = SOA_spmv_3d19_Cal32Stg16;
+            SOA_spmv_scaled = SOA_spmv_3d19_scaled_Cal32Stg16;
+        }
 #endif
         break;
     case 27:
         stencil = stencil_offset_3d27;
 #ifdef __aarch64__
-        if constexpr (sizeof(data_t) != sizeof(calc_t)) SOA_spmv = SOA_spmv_3d27_Cal32Stg16;
+        if constexpr (sizeof(data_t) != sizeof(calc_t)) {
+            SOA_spmv        = SOA_spmv_3d27_Cal32Stg16;
+            SOA_spmv_scaled = SOA_spmv_3d27_scaled_Cal32Stg16;
+        }
 #endif
         break;
     default:
@@ -379,9 +389,11 @@ void par_structMatrix<idx_t, data_t, calc_t>::SOA_Mult(const seq_structVector<id
     CHECK_LOCAL_HALO(*local_matrix, x);
     CHECK_LOCAL_HALO(x , y);
     assert(DiagGroups_separated);
-    assert(SOA_spmv);
+    void (*kernel)(const idx_t, const idx_t, const idx_t, const data_t**, const calc_t*, calc_t*, const calc_t*)
+        = scaled ? SOA_spmv_scaled : SOA_spmv;
     const calc_t * x_data = x.data;
     calc_t * y_data = y.data;
+    const calc_t * sqD_data = scaled ? sqrt_D->data : nullptr;
 
     const idx_t ibeg = x.halo_x, iend = ibeg + x.local_x,
                 jbeg = x.halo_y, jend = jbeg + x.local_y,
@@ -398,12 +410,13 @@ void par_structMatrix<idx_t, data_t, calc_t>::SOA_Mult(const seq_structVector<id
             const idx_t vec_off = j * vec_ki_size + i * vec_k_size + kbeg;// 一定要有kbeg
             const calc_t * x_jik = x_data + vec_off;
             calc_t * y_jik = y_data + vec_off;
+            const calc_t * sqD_jik = sqD_data + vec_off;
             for (idx_t g = 0; g < DiagGroups_cnt; g++)
                 // A_jik[g] = DG_data[g] + j * slice_dki[g]
                 //     + i * slice_dk[g] + kbeg * nd[g];
                 A_jik[g] = DiagGroups[g]->data + j * DiagGroups[g]->slice_dki_size
                         + i * DiagGroups[g]->slice_dk_size + kbeg * DiagGroups[g]->num_diag;
-            SOA_spmv(col_height, vec_k_size, vec_ki_size, A_jik, x_jik, y_jik);
+            kernel(col_height, vec_k_size, vec_ki_size, A_jik, x_jik, y_jik, sqD_jik);
         }
     }
 }

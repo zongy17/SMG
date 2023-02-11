@@ -392,8 +392,8 @@ seq_structMatrix<idx_t, data_t, calc_t>::seq_structMatrix(idx_t num_d, idx_t lx,
     switch (num_diag)
     {
     case  7: spmv = AOS_spmv_3d7 <idx_t, data_t>; spmv_scaled = AOS_spmv_3d7_scaled<idx_t, data_t>; break;
-    case 19: spmv = AOS_spmv_3d19<idx_t, data_t>; break;
-    case 27: spmv = AOS_spmv_3d27<idx_t, data_t>; break;
+    case 19: spmv = AOS_spmv_3d19<idx_t, data_t>; spmv_scaled = AOS_spmv_3d19_scaled<idx_t, data_t>; break;
+    case 27: spmv = AOS_spmv_3d27<idx_t, data_t>; spmv_scaled = AOS_spmv_3d27_scaled<idx_t, data_t>; break;
     default: break;
     }
 }
@@ -445,6 +445,7 @@ void seq_structMatrix<idx_t, data_t, calc_t>::Mult(
                 * aux_data = (sqrtD_ptr) ? sqrtD_ptr->data : nullptr;
     void (*kernel)(const idx_t, const idx_t, const idx_t, const data_t*, const data_t*, data_t*, const data_t*)
         = (sqrtD_ptr) ? spmv_scaled : spmv;
+    assert(kernel);
 
     const calc_t * x_data = x.data;
     calc_t * y_data = y.data;

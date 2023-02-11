@@ -274,6 +274,8 @@ int main(int argc, char ** argv)
         if (strcmp(case_name.c_str(), "GRAPES" ) == 0) {// 使用绝对残差
             if (its_name == "GCR") solver->SetAbsTol(1e-10);// 注意：这一版的GCR里用的是点积结果（不开根）判敛，实际是范数的平方
             else solver->SetAbsTol(1e-5);
+            // if (prc_name == "GMG")
+            //     ((GeometricMultiGrid<IDX_TYPE, PC_TYPE, KSP_TYPE>*)precond)->scale_before_setup_smoothers = true;
         } else {// 其它算例使用相对残差
             if (its_name == "GCR") solver->SetRelTol(1e-18);
             else solver->SetRelTol(1e-9);

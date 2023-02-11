@@ -2,10 +2,10 @@
 #define SMG_COMMON_HPP
 
 #ifndef KSP_BIT
-#define KSP_BIT 64
+#define KSP_BIT 32
 #endif
 #ifndef PC_BIT
-#define PC_BIT 32
+#define PC_BIT 16
 #endif
 
 #if KSP_BIT==80

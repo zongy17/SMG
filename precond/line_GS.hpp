@@ -21,20 +21,34 @@ public:
 	void separate_diags();
 
 	void (*AOS_forward_zero)
-        (const idx_t, const idx_t, const idx_t, const data_t*, const data_t*, const calc_t*, const calc_t*, calc_t*) = nullptr;
+        (const idx_t, const idx_t, const idx_t, const data_t*, const data_t*, const calc_t*, const calc_t*, const calc_t*, calc_t*) = nullptr;
     void (*AOS_backward_zero)
-        (const idx_t, const idx_t, const idx_t, const data_t*, const data_t*, const calc_t*, const calc_t*, calc_t*) = nullptr;
+        (const idx_t, const idx_t, const idx_t, const data_t*, const data_t*, const calc_t*, const calc_t*, const calc_t*, calc_t*) = nullptr;
     void (*AOS_ALL)
-        (const idx_t, const idx_t, const idx_t, const data_t*, const data_t*, const calc_t*, const calc_t*, calc_t*) = nullptr;
+        (const idx_t, const idx_t, const idx_t, const data_t*, const data_t*, const calc_t*, const calc_t*, const calc_t*, calc_t*) = nullptr;
+	void (*AOS_forward_scaled_zero)
+        (const idx_t, const idx_t, const idx_t, const data_t*, const data_t*, const calc_t*, const calc_t*, const calc_t*, calc_t*) = nullptr;
+    void (*AOS_backward_scaled_zero)
+        (const idx_t, const idx_t, const idx_t, const data_t*, const data_t*, const calc_t*, const calc_t*, const calc_t*, calc_t*) = nullptr;
+    void (*AOS_scaled_ALL)
+        (const idx_t, const idx_t, const idx_t, const data_t*, const data_t*, const calc_t*, const calc_t*, const calc_t*, calc_t*) = nullptr;
 
 	void (*SOA_forward_zero)
-		(const idx_t, const idx_t, const idx_t, const data_t**, 			  const calc_t*, const calc_t*, calc_t*) = nullptr;
+		(const idx_t, const idx_t, const idx_t, const data_t**, 			  const calc_t*, const calc_t*, const calc_t*, calc_t*) = nullptr;
 	void (*SOA_forward_ALL)
-		(const idx_t, const idx_t, const idx_t, const data_t**, 			  const calc_t*, const calc_t*, calc_t*) = nullptr;
+		(const idx_t, const idx_t, const idx_t, const data_t**, 			  const calc_t*, const calc_t*, const calc_t*, calc_t*) = nullptr;
 	void (*SOA_backward_zero)
-		(const idx_t, const idx_t, const idx_t, const data_t**,				  const calc_t*, const calc_t*, calc_t*) = nullptr;
+		(const idx_t, const idx_t, const idx_t, const data_t**,				  const calc_t*, const calc_t*, const calc_t*, calc_t*) = nullptr;
 	void (*SOA_backward_ALL)
-		(const idx_t, const idx_t, const idx_t, const data_t**, 			  const calc_t*, const calc_t*, calc_t*) = nullptr;
+		(const idx_t, const idx_t, const idx_t, const data_t**, 			  const calc_t*, const calc_t*, const calc_t*, calc_t*) = nullptr;
+	void (*SOA_forward_scaled_zero)
+		(const idx_t, const idx_t, const idx_t, const data_t**, 			  const calc_t*, const calc_t*, const calc_t*, calc_t*) = nullptr;
+	void (*SOA_forward_scaled_ALL)
+		(const idx_t, const idx_t, const idx_t, const data_t**, 			  const calc_t*, const calc_t*, const calc_t*, calc_t*) = nullptr;
+	void (*SOA_backward_scaled_zero)
+		(const idx_t, const idx_t, const idx_t, const data_t**,				  const calc_t*, const calc_t*, const calc_t*, calc_t*) = nullptr;
+	void (*SOA_backward_scaled_ALL)
+		(const idx_t, const idx_t, const idx_t, const data_t**, 			  const calc_t*, const calc_t*, const calc_t*, calc_t*) = nullptr;
 
     LineGS(SCAN_TYPE type, LINE_DIRECTION line_dir, const StructCommPackage * comm_pkg = nullptr) : 
 		LineSolver<idx_t, data_t, calc_t>(line_dir, comm_pkg), scan_type(type) {  }
@@ -77,12 +91,22 @@ public:
 				SOA_forward_ALL		= SOA_line_forward_ALL_3d19_Cal32Stg16;
 				SOA_backward_zero   = nullptr;
 				SOA_backward_ALL	= SOA_line_backward_ALL_3d19_Cal32Stg16;
+
+				SOA_forward_scaled_zero	= SOA_line_forward_scaled_zero_3d19_Cal32Stg16;
+				SOA_forward_scaled_ALL	= SOA_line_forward_scaled_ALL_3d19_Cal32Stg16;
+				SOA_backward_scaled_zero= nullptr;
+				SOA_backward_scaled_ALL	= SOA_line_backward_scaled_ALL_3d19_Cal32Stg16;
 				break;
 			case 27:
 				SOA_forward_zero	= SOA_line_forward_zero_3d27_Cal32Stg16;
 				SOA_forward_ALL		= SOA_line_forward_ALL_3d27_Cal32Stg16;
 				SOA_backward_zero   = nullptr;
 				SOA_backward_ALL	= SOA_line_backward_ALL_3d27_Cal32Stg16;
+
+				SOA_forward_scaled_zero	= SOA_line_forward_scaled_zero_3d27_Cal32Stg16;
+				SOA_forward_scaled_ALL	= SOA_line_forward_scaled_ALL_3d27_Cal32Stg16;
+				SOA_backward_scaled_zero= nullptr;
+				SOA_backward_scaled_ALL	= SOA_line_backward_scaled_ALL_3d27_Cal32Stg16;
 				break;
             default:
                 MPI_Abort(MPI_COMM_WORLD, -10304);
@@ -104,11 +128,17 @@ public:
 				AOS_forward_zero	= AOS_line_forward_zero_3d19<idx_t, data_t, calc_t>;
 				AOS_backward_zero   = AOS_line_backward_zero_3d19<idx_t, data_t, calc_t>;
 				AOS_ALL				= AOS_line_ALL_3d19<idx_t, data_t, calc_t>;
+				AOS_forward_scaled_zero	= AOS_line_forward_scaled_zero_3d19<idx_t, data_t, calc_t>;
+				AOS_backward_scaled_zero= AOS_line_backward_scaled_zero_3d19<idx_t, data_t, calc_t>;
+				AOS_scaled_ALL			= AOS_line_ALL_scaled_3d19<idx_t, data_t, calc_t>;
 				break;
 			case 27:
 				AOS_forward_zero	= AOS_line_forward_zero_3d27<idx_t, data_t, calc_t>;
 				AOS_backward_zero   = AOS_line_backward_zero_3d27<idx_t, data_t, calc_t>;
 				AOS_ALL				= AOS_line_ALL_3d27<idx_t, data_t, calc_t>;
+				AOS_forward_scaled_zero	= AOS_line_forward_scaled_zero_3d27<idx_t, data_t, calc_t>;
+				AOS_backward_scaled_zero= AOS_line_backward_scaled_zero_3d27<idx_t, data_t, calc_t>;
+				AOS_scaled_ALL			= AOS_line_ALL_scaled_3d27<idx_t, data_t, calc_t>;
 				break;
             default:
                 MPI_Abort(MPI_COMM_WORLD, -10303);
@@ -160,7 +190,7 @@ void LineGS<idx_t, data_t, calc_t>::Mult(const par_structVector<idx_t, calc_t> &
 			if (this->zero_guess)
 				x.set_val(0.0, true);
 			else
-	            x.update_halo();	
+	            x.update_halo();
 #ifdef PROFILE
 			for (int te = 0; te < warm_cnt; te++) {
                 if constexpr (sizeof(data_t) == sizeof(calc_t))
@@ -272,15 +302,21 @@ void LineGS<idx_t, data_t, calc_t>::AOS_ForwardPass(const par_structVector<idx_t
                 kbeg = b_vec.halo_z, kend = kbeg + b_vec.local_z;
     const idx_t vec_k_size = x_vec.slice_k_size, vec_ki_size = x_vec.slice_ki_size;
 
+	const bool scaled = par_A->scaled;
 	const data_t weight = this->weight;
 	const int num_threads = omp_get_max_threads();
     const idx_t col_height = kend - kbeg;
+	const calc_t * sqD_data = scaled ? par_A->sqrt_D->data : nullptr;
     const data_t * L_data = L->data, * U_data = (this->zero_guess) ? nullptr : U->data;
     const idx_t slice_dki_size = L->slice_dki_size, slice_dk_size = L->slice_dk_size;
 	const idx_t num_diag = L->num_diag;
     void (*kernel) (const idx_t, const idx_t, const idx_t,
-                    const data_t*, const data_t*, const calc_t*, const calc_t*, calc_t*)
-		= (this->zero_guess) ? AOS_forward_zero : AOS_ALL;
+		const data_t*, const data_t*, const calc_t*, const calc_t*, const calc_t*, calc_t*) = nullptr;
+	if (this->zero_guess) {
+		kernel = scaled ? AOS_forward_scaled_zero : AOS_forward_zero;
+	} else {
+		kernel = scaled ? AOS_scaled_ALL : AOS_ALL;
+	}
 	assert(kernel);
 
 	const data_t one_minus_weight = 1.0 - weight;
@@ -297,6 +333,7 @@ void LineGS<idx_t, data_t, calc_t>::AOS_ForwardPass(const par_structVector<idx_t
 		{
 			calc_t buf[(x_vec.slice_k_size + 2) * 2];
 			calc_t * const sol = buf + 1, * const rhs = buf + (x_vec.slice_k_size + 2) + 1;
+			calc_t sqD_buf[col_height]; for (idx_t k = 0; k < col_height; k++) sqD_buf[k] = 1.0;
 			int tid = omp_get_thread_num();
 			int nt = omp_get_num_threads();
 			// 各自开始计算
@@ -325,14 +362,15 @@ void LineGS<idx_t, data_t, calc_t>::AOS_ForwardPass(const par_structVector<idx_t
 					const idx_t vec_off = j * vec_ki_size + i * vec_k_size + kbeg;
 					calc_t * x_jik = x_data + vec_off;
 					const calc_t * b_jik = b_data + vec_off;
+					const calc_t * sqD_jik = sqD_data ? sqD_data + vec_off : sqD_buf;
 					idx_t sid = local_x * (j - jbeg) + i - ibeg;
 					// 线程边界处等待
 					if (it == t_beg) while ( __atomic_load_n(&flag[j_lev+1], __ATOMIC_ACQUIRE) < i_lev - 1) {  } // 只需检查W依赖
 					if (it == t_end - 1) while (__atomic_load_n(&flag[j_lev  ], __ATOMIC_ACQUIRE) < i_to_wait) {  }
 
-					kernel(col_height, vec_k_size, vec_ki_size, L_jik, U_jik, b_jik, x_jik, rhs);
-					this->tri_solver[sid]->Solve(rhs, sol);// 注意这个偏移！！kbeg == 1
-					for (idx_t k = 0; k < col_height; k++) x_jik[k] = one_minus_weight * x_jik[k] + weight * sol[k];
+					kernel(col_height, vec_k_size, vec_ki_size, L_jik, U_jik, b_jik, x_jik, sqD_jik, rhs);
+					this->tri_solver[sid]->Solve(rhs, sol);// 注意这个偏移！！kbeg == 1					
+					for (idx_t k = 0; k < col_height; k++) x_jik[k] = one_minus_weight * x_jik[k] + weight * sol[k] / sqD_jik[k];
 
 					if (it == t_beg || it == t_end - 1) __atomic_store_n(&flag[j_lev+1], i_lev, __ATOMIC_RELEASE);
 					else flag[j_lev+1] = i_lev;
@@ -343,6 +381,7 @@ void LineGS<idx_t, data_t, calc_t>::AOS_ForwardPass(const par_structVector<idx_t
 	else {
 		calc_t buf[x_vec.slice_k_size << 1];
 		calc_t * const sol = buf + kbeg, * const rhs = buf + (x_vec.slice_k_size) + kbeg;
+		calc_t sqD_buf[col_height]; for (idx_t k = 0; k < col_height; k++) sqD_buf[k] = 1.0;
 		for (idx_t j = jbeg; j < jend; j++)
 		for (idx_t i = ibeg; i < iend; i++) {
 			const idx_t mat_off = j * slice_dki_size + i * slice_dk_size + kbeg * num_diag;
@@ -351,11 +390,12 @@ void LineGS<idx_t, data_t, calc_t>::AOS_ForwardPass(const par_structVector<idx_t
 			const idx_t vec_off = j * vec_ki_size + i * vec_k_size + kbeg;
 			calc_t * x_jik = x_data + vec_off;
 			const calc_t * b_jik = b_data + vec_off;
+			const calc_t * sqD_jik = sqD_data ? sqD_data + vec_off : sqD_buf;
 			idx_t sid = local_x * (j - jbeg) + i - ibeg;
 
-			kernel(col_height, vec_k_size, vec_ki_size, L_jik, U_jik, b_jik, x_jik, rhs);
+			kernel(col_height, vec_k_size, vec_ki_size, L_jik, U_jik, b_jik, x_jik, sqD_jik, rhs);
 			this->tri_solver[sid]->Solve(rhs, sol);// 注意这个偏移！！kbeg == 1
-			for (idx_t k = 0; k < col_height; k++) x_jik[k] = one_minus_weight * x_jik[k] + weight * sol[k];
+			for (idx_t k = 0; k < col_height; k++) x_jik[k] = one_minus_weight * x_jik[k] + weight * sol[k] / sqD_jik[k];
 		}
 	}
 }
@@ -377,15 +417,21 @@ void LineGS<idx_t, data_t, calc_t>::AOS_BackwardPass(const par_structVector<idx_
                 kbeg = b_vec.halo_z, kend = kbeg + b_vec.local_z;
     const idx_t vec_k_size = x_vec.slice_k_size, vec_ki_size = x_vec.slice_ki_size;
     
+	const bool scaled = par_A->scaled;
 	const calc_t weight = this->weight;
 	const int num_threads = omp_get_max_threads();
     const idx_t col_height = kend - kbeg;
+	const calc_t * sqD_data = scaled ? par_A->sqrt_D->data : nullptr;
     const data_t * L_data = (this->zero_guess) ? nullptr : L->data, * U_data = U->data;
     const idx_t slice_dki_size = U->slice_dki_size, slice_dk_size = U->slice_dk_size;
 	const idx_t num_diag = U->num_diag;
     void (*kernel) (const idx_t, const idx_t, const idx_t,
-                    const data_t*, const data_t*, const calc_t*, const calc_t*, calc_t*)
-		= (this->zero_guess) ? AOS_backward_zero : AOS_ALL;
+			const data_t*, const data_t*, const calc_t*, const calc_t*, const calc_t*, calc_t*) = nullptr;
+	if (this->zero_guess) {
+		kernel = scaled ? AOS_backward_scaled_zero : AOS_backward_zero;
+	} else {
+		kernel = scaled ? AOS_scaled_ALL : AOS_ALL;
+	}
 	assert(kernel);
 	
 	const calc_t one_minus_weight = 1.0 - weight;
@@ -402,6 +448,7 @@ void LineGS<idx_t, data_t, calc_t>::AOS_BackwardPass(const par_structVector<idx_
 		{
 			calc_t buf[x_vec.slice_k_size << 1];
 			calc_t * const sol = buf + kbeg, * const rhs = buf + (x_vec.slice_k_size) + kbeg;
+			calc_t sqD_buf[col_height]; for (idx_t k = 0; k < col_height; k++) sqD_buf[k] = 1.0;
 			int tid = omp_get_thread_num();
 			int nt = omp_get_num_threads();
 			// 各自开始计算
@@ -430,14 +477,15 @@ void LineGS<idx_t, data_t, calc_t>::AOS_BackwardPass(const par_structVector<idx_
 					const idx_t vec_off = j * vec_ki_size + i * vec_k_size + kbeg;
 					calc_t * x_jik = x_data + vec_off;
 					const calc_t * b_jik = b_data + vec_off;
+					const calc_t * sqD_jik = sqD_data ? sqD_data + vec_off : sqD_buf;
 					idx_t sid = local_x * (j - jbeg) + i - ibeg;
 					// 线程边界处等待
 					if (it == t_beg) while ( __atomic_load_n(&flag[j_lev+1], __ATOMIC_ACQUIRE) > i_to_wait) {  }
 					if (it == t_end - 1) while (__atomic_load_n(&flag[j_lev  ], __ATOMIC_ACQUIRE) > i_lev + 1) {  }
 					// 中间的不需等待
-					kernel(col_height, vec_k_size, vec_ki_size, L_jik, U_jik, b_jik, x_jik, rhs);
+					kernel(col_height, vec_k_size, vec_ki_size, L_jik, U_jik, b_jik, x_jik, sqD_jik, rhs);
 					this->tri_solver[sid]->Solve(rhs, sol);
-					for (idx_t k = 0; k < col_height; k++) x_jik[k] = one_minus_weight * x_jik[k] + weight * sol[k];
+					for (idx_t k = 0; k < col_height; k++) x_jik[k] = one_minus_weight * x_jik[k] + weight * sol[k] / sqD_jik[k];
 					// 写回
 					if (it == t_beg || it == t_end - 1) __atomic_store_n(&flag[j_lev], i_lev, __ATOMIC_RELEASE);
 					else flag[j_lev] = i_lev;
@@ -448,6 +496,7 @@ void LineGS<idx_t, data_t, calc_t>::AOS_BackwardPass(const par_structVector<idx_
 	else {
 		calc_t buf[x_vec.slice_k_size << 1];
 		calc_t * const sol = buf + kbeg, * const rhs = buf + (x_vec.slice_k_size) + kbeg;
+		calc_t sqD_buf[col_height]; for (idx_t k = 0; k < col_height; k++) sqD_buf[k] = 1.0;
 		for (idx_t j = jend - 1; j >= jbeg; j--)
 		for (idx_t i = iend - 1; i >= ibeg; i--) {
 			const idx_t mat_off = j * slice_dki_size + i * slice_dk_size + kbeg * num_diag;
@@ -456,10 +505,11 @@ void LineGS<idx_t, data_t, calc_t>::AOS_BackwardPass(const par_structVector<idx_
 			const idx_t vec_off = j * vec_ki_size + i * vec_k_size + kbeg;
 			calc_t * x_jik = x_data + vec_off;
 			const calc_t * b_jik = b_data + vec_off;
+			const calc_t * sqD_jik = sqD_data ? sqD_data + vec_off : sqD_buf;
 			idx_t sid = local_x * (j - jbeg) + i - ibeg;
-			kernel(col_height, vec_k_size, vec_ki_size, L_jik, U_jik, b_jik, x_jik, rhs);
+			kernel(col_height, vec_k_size, vec_ki_size, L_jik, U_jik, b_jik, x_jik, sqD_jik, rhs);
 			this->tri_solver[sid]->Solve(rhs, sol);
-			for (idx_t k = 0; k < col_height; k++) x_jik[k] = one_minus_weight * x_jik[k] + weight * sol[k];
+			for (idx_t k = 0; k < col_height; k++) x_jik[k] = one_minus_weight * x_jik[k] + weight * sol[k] / sqD_jik[k];
 		}
 	}
 }
@@ -705,18 +755,21 @@ void LineGS<idx_t, data_t, calc_t>::SOA_ForwardPass(const par_structVector<idx_t
     const idx_t vec_k_size = x_vec.slice_k_size, vec_ki_size = x_vec.slice_ki_size;
 
 	const int num_threads = omp_get_max_threads();
+	const bool scaled = par_A->scaled;
     const idx_t col_height = kend - kbeg;
-    void (*kernel) (const idx_t, const idx_t, const idx_t, const data_t**, const calc_t*, const calc_t*, calc_t*) = nullptr;
+	const calc_t * sqD_data = scaled ? par_A->sqrt_D->data : nullptr;
+    void (*kernel) (const idx_t, const idx_t, const idx_t, const data_t**, const calc_t*, const calc_t*, const calc_t*, calc_t*) = nullptr;
 	idx_t num_arrs;
 	if (this->zero_guess) {
-		kernel = SOA_forward_zero;
+		kernel = scaled ? SOA_forward_scaled_zero : SOA_forward_zero;
 		num_arrs = DiagGroups_cnt >> 1;
 	} else {
-		kernel = SOA_forward_ALL;
+		kernel = scaled ? SOA_forward_scaled_ALL : SOA_forward_ALL;
 		num_arrs = DiagGroups_cnt;
 	}
 	const idx_t beg_arrId = 0;// 前扫时总是从第0个开始
 	assert(kernel);
+	// printf("LGS-F kernel: %p\n", kernel);
 
 	const data_t weight = this->weight;
 	const data_t one_minus_weight = 1.0 - weight;
@@ -733,6 +786,7 @@ void LineGS<idx_t, data_t, calc_t>::SOA_ForwardPass(const par_structVector<idx_t
 		{
 			calc_t buf[(x_vec.slice_k_size + 2) * 2];
 			calc_t * const sol = buf + 1, * const rhs = buf + (x_vec.slice_k_size + 2) + 1;
+			calc_t sqD_buf[col_height]; for (idx_t k = 0; k < col_height; k++) sqD_buf[k] = 1.0;
 			int tid = omp_get_thread_num();
 			int nt = omp_get_num_threads();
 			const data_t * A_jik[num_arrs];
@@ -764,6 +818,7 @@ void LineGS<idx_t, data_t, calc_t>::SOA_ForwardPass(const par_structVector<idx_t
                     }
 					const calc_t * b_jik = b_data + vec_off;
 					calc_t * x_jik = x_data + vec_off;
+					const calc_t * sqD_jik = sqD_data ? sqD_data + vec_off : sqD_buf;
 					idx_t sid = local_x * (j - jbeg) + i - ibeg;
 					TridiagSolver<idx_t, data_t, calc_t> * tridSolver = this->tri_solver[sid];
 					{// 预取本柱的三对角系数
@@ -775,9 +830,9 @@ void LineGS<idx_t, data_t, calc_t>::SOA_ForwardPass(const par_structVector<idx_t
 					if (it == t_beg) while ( __atomic_load_n(&flag[j_lev+1], __ATOMIC_ACQUIRE) < i_lev - 1) {  } // 只需检查W依赖
 					if (it == t_end - 1) while (__atomic_load_n(&flag[j_lev  ], __ATOMIC_ACQUIRE) < i_to_wait) {  }
 
-					kernel(col_height, vec_k_size, vec_ki_size, A_jik, b_jik, x_jik, rhs);
+					kernel(col_height, vec_k_size, vec_ki_size, A_jik, b_jik, x_jik, sqD_jik, rhs);
 					tridSolver->Solve_neon_prft(rhs, sol);// 注意这个偏移！！kbeg == 1
-					for (idx_t k = 0; k < col_height; k++) x_jik[k] = one_minus_weight * x_jik[k] + weight * sol[k];
+					for (idx_t k = 0; k < col_height; k++) x_jik[k] = one_minus_weight * x_jik[k] + weight * sol[k] / sqD_jik[k];
 
 					if (it == t_beg || it == t_end - 1) __atomic_store_n(&flag[j_lev+1], i_lev, __ATOMIC_RELEASE);
 					else flag[j_lev+1] = i_lev;
@@ -788,6 +843,7 @@ void LineGS<idx_t, data_t, calc_t>::SOA_ForwardPass(const par_structVector<idx_t
 	else {
 		calc_t buf[x_vec.slice_k_size << 1];
 		calc_t * const sol = buf + kbeg, * const rhs = buf + (x_vec.slice_k_size) + kbeg;
+		calc_t sqD_buf[col_height]; for (idx_t k = 0; k < col_height; k++) sqD_buf[k] = 1.0;
 		const data_t * A_jik[num_arrs];
 		for (idx_t j = jbeg; j < jend; j++)
 		for (idx_t i = ibeg; i < iend; i++) {
@@ -799,6 +855,8 @@ void LineGS<idx_t, data_t, calc_t>::SOA_ForwardPass(const par_structVector<idx_t
 			}
 			const calc_t * b_jik = b_data + vec_off;
 			calc_t * x_jik = x_data + vec_off;
+			const calc_t * sqD_jik = sqD_data ? sqD_data + vec_off : sqD_buf;
+			// printf("j %d i %d sqD_jik %p\n", j, i, sqD_jik);
 			idx_t sid = local_x * (j - jbeg) + i - ibeg;
 			TridiagSolver<idx_t, data_t, calc_t> * tridSolver = this->tri_solver[sid];
 			{// 预取本柱的三对角系数
@@ -806,9 +864,9 @@ void LineGS<idx_t, data_t, calc_t>::SOA_ForwardPass(const par_structVector<idx_t
 				__builtin_prefetch(tridSolver->Get_b(), 0, 0);
 				__builtin_prefetch(tridSolver->Get_c(), 0, 0);
 			}
-			kernel(col_height, vec_k_size, vec_ki_size, A_jik, b_jik, x_jik, rhs);
+			kernel(col_height, vec_k_size, vec_ki_size, A_jik, b_jik, x_jik, sqD_jik, rhs);
 			tridSolver->Solve_neon_prft(rhs, sol);// 注意这个偏移！！kbeg == 1
-			for (idx_t k = 0; k < col_height; k++) x_jik[k] = one_minus_weight * x_jik[k] + weight * sol[k];
+			for (idx_t k = 0; k < col_height; k++) x_jik[k] = one_minus_weight * x_jik[k] + weight * sol[k] / sqD_jik[k];
 		}
 	}
 
@@ -832,19 +890,22 @@ void LineGS<idx_t, data_t, calc_t>::SOA_BackwardPass(const par_structVector<idx_
     const idx_t vec_k_size = x_vec.slice_k_size, vec_ki_size = x_vec.slice_ki_size;
     
 	const int num_threads = omp_get_max_threads();
+	const bool scaled = par_A->scaled;
     const idx_t col_height = kend - kbeg;
-    void (*kernel) (const idx_t, const idx_t, const idx_t, const data_t**, const calc_t*, const calc_t*, calc_t*) = nullptr;
+	const calc_t * sqD_data = scaled ? par_A->sqrt_D->data : nullptr;
+    void (*kernel) (const idx_t, const idx_t, const idx_t, const data_t**, const calc_t*, const calc_t*, const calc_t*, calc_t*) = nullptr;
 	idx_t num_arrs, beg_arrId;
 	if (this->zero_guess) {
-		kernel = SOA_backward_zero;
+		kernel = scaled ? SOA_backward_scaled_zero : SOA_backward_zero;
 		num_arrs = DiagGroups_cnt >> 1;
 		beg_arrId= DiagGroups_cnt >> 1;
 	} else {
-		kernel = SOA_backward_ALL;
+		kernel = scaled ? SOA_backward_scaled_ALL : SOA_backward_ALL;
 		num_arrs = DiagGroups_cnt;
 		beg_arrId= 0;
 	}
 	assert(kernel);
+	// printf("LGS-B kernel: %p\n", kernel);
 	
 	const calc_t weight = this->weight;
 	const calc_t one_minus_weight = 1.0 - weight;
@@ -861,6 +922,7 @@ void LineGS<idx_t, data_t, calc_t>::SOA_BackwardPass(const par_structVector<idx_
 		{
 			calc_t buf[x_vec.slice_k_size << 1];
 			calc_t * const sol = buf + kbeg, * const rhs = buf + (x_vec.slice_k_size) + kbeg;
+			calc_t sqD_buf[col_height]; for (idx_t k = 0; k < col_height; k++) sqD_buf[k] = 1.0;
 			int tid = omp_get_thread_num();
 			int nt = omp_get_num_threads();
 			const data_t * A_jik[num_arrs];
@@ -892,6 +954,7 @@ void LineGS<idx_t, data_t, calc_t>::SOA_BackwardPass(const par_structVector<idx_
                     }
 					const calc_t * b_jik = b_data + vec_off;
 					calc_t * x_jik = x_data + vec_off;
+					const calc_t * sqD_jik = sqD_data ? sqD_data + vec_off : sqD_buf + col_height;// 注意这里的偏移
 					idx_t sid = local_x * (j - jbeg) + i - ibeg;
 					TridiagSolver<idx_t, data_t, calc_t> * tridSolver = this->tri_solver[sid];
 					{// 预取本柱的三对角系数
@@ -903,10 +966,15 @@ void LineGS<idx_t, data_t, calc_t>::SOA_BackwardPass(const par_structVector<idx_
 					if (it == t_beg) while ( __atomic_load_n(&flag[j_lev+1], __ATOMIC_ACQUIRE) > i_to_wait) {  }
 					if (it == t_end - 1) while (__atomic_load_n(&flag[j_lev  ], __ATOMIC_ACQUIRE) > i_lev + 1) {  }
 					// 中间的不需等待
-					kernel(col_height, vec_k_size, vec_ki_size, A_jik, b_jik, x_jik, rhs + col_height);
+					kernel(col_height, vec_k_size, vec_ki_size, A_jik, b_jik, x_jik, sqD_jik, rhs + col_height);
 					tridSolver->Solve_neon_prft(rhs, sol);
+					// printf("j %d i % d rhs sol\n", j, i);
+					// for (idx_t k = 0; k < col_height; k++)
+					// 	printf("%d %.5e %.5e\n", k, rhs[k], sol[k]);
+					// printf("\n");
 					x_jik -= col_height;// 重新将写回的位置移动到柱底
-					for (idx_t k = 0; k < col_height; k++) x_jik[k] = one_minus_weight * x_jik[k] + weight * sol[k];
+					sqD_jik -= col_height;
+					for (idx_t k = 0; k < col_height; k++) x_jik[k] = one_minus_weight * x_jik[k] + weight * sol[k] / sqD_jik[k];
 					// 写回
 					if (it == t_beg || it == t_end - 1) __atomic_store_n(&flag[j_lev], i_lev, __ATOMIC_RELEASE);
 					else flag[j_lev] = i_lev;
@@ -917,6 +985,7 @@ void LineGS<idx_t, data_t, calc_t>::SOA_BackwardPass(const par_structVector<idx_
 	else {
 		calc_t buf[x_vec.slice_k_size << 1];
 		calc_t * const sol = buf + kbeg, * const rhs = buf + (x_vec.slice_k_size) + kbeg;
+		calc_t sqD_buf[col_height]; for (idx_t k = 0; k < col_height; k++) sqD_buf[k] = 1.0;
 		const data_t * A_jik[num_arrs];
 		for (idx_t j = jend - 1; j >= jbeg; j--)
 		for (idx_t i = iend - 1; i >= ibeg; i--) {
@@ -928,6 +997,7 @@ void LineGS<idx_t, data_t, calc_t>::SOA_BackwardPass(const par_structVector<idx_
 			}
 			const calc_t * b_jik = b_data + vec_off;
 			calc_t * x_jik = x_data + vec_off;
+			const calc_t * sqD_jik = sqD_data ? sqD_data + vec_off : sqD_buf + col_height;
 			idx_t sid = local_x * (j - jbeg) + i - ibeg;
 			TridiagSolver<idx_t, data_t, calc_t> * tridSolver = this->tri_solver[sid];
 			{// 预取本柱的三对角系数
@@ -935,12 +1005,13 @@ void LineGS<idx_t, data_t, calc_t>::SOA_BackwardPass(const par_structVector<idx_
 				__builtin_prefetch(tridSolver->Get_b(), 0, 0);
 				__builtin_prefetch(tridSolver->Get_c(), 0, 0);
 			}
-			kernel(col_height, vec_k_size, vec_ki_size, A_jik, b_jik, x_jik, rhs + col_height);
+			kernel(col_height, vec_k_size, vec_ki_size, A_jik, b_jik, x_jik, sqD_jik, rhs + col_height);
 			
 			tridSolver->Solve_neon_prft(rhs, sol);
 
 			x_jik -= col_height;// 重新将写回的位置移动到柱底
-			for (idx_t k = 0; k < col_height; k++) x_jik[k] = one_minus_weight * x_jik[k] + weight * sol[k];
+			sqD_jik -= col_height;
+			for (idx_t k = 0; k < col_height; k++) x_jik[k] = one_minus_weight * x_jik[k] + weight * sol[k] / sqD_jik[k];
 		}
 	}
 }

@@ -56,6 +56,42 @@ void inline AOS_spmv_3d19(const idx_t num,
     }
 }
 
+template<typename idx_t, typename data_t, typename calc_t>
+void inline AOS_spmv_3d19_scaled(const idx_t num,
+    const idx_t vec_k_size, const idx_t vec_ki_size,
+    const data_t * A_jik, const calc_t * x_jik, calc_t * y_jik, const data_t * sqD_jik)
+{
+    const calc_t * x_jNi = x_jik - vec_ki_size, * x_jPi = x_jik + vec_ki_size;
+    const calc_t * sqD_jNi = sqD_jik - vec_ki_size, * sqD_jPi = sqD_jik + vec_ki_size;
+    #pragma GCC unroll (4)
+    for (idx_t k = 0; k < num; k++) {
+        calc_t tmp = 
+            + A_jik[ 0] * x_jNi[- vec_k_size + k  ] * sqD_jNi[- vec_k_size + k  ]
+            + A_jik[ 1] * x_jNi[               k-1] * sqD_jNi[               k-1]
+            + A_jik[ 2] * x_jNi[               k  ] * sqD_jNi[               k  ]
+            + A_jik[ 3] * x_jNi[               k+1] * sqD_jNi[               k+1]
+            + A_jik[ 4] * x_jNi[  vec_k_size + k  ] * sqD_jNi[  vec_k_size + k  ]
+
+            + A_jik[ 5] * x_jik[- vec_k_size + k-1] * sqD_jik[- vec_k_size + k-1]
+            + A_jik[ 6] * x_jik[- vec_k_size + k  ] * sqD_jik[- vec_k_size + k  ]
+            + A_jik[ 7] * x_jik[- vec_k_size + k+1] * sqD_jik[- vec_k_size + k+1]
+            + A_jik[ 8] * x_jik[               k-1] * sqD_jik[               k-1]
+            + A_jik[ 9] * x_jik[               k  ] * sqD_jik[               k  ]
+            + A_jik[10] * x_jik[               k+1] * sqD_jik[               k+1]
+            + A_jik[11] * x_jik[  vec_k_size + k-1] * sqD_jik[  vec_k_size + k-1]
+            + A_jik[12] * x_jik[  vec_k_size + k  ] * sqD_jik[  vec_k_size + k  ]
+            + A_jik[13] * x_jik[  vec_k_size + k+1] * sqD_jik[  vec_k_size + k+1]
+
+            + A_jik[14] * x_jPi[- vec_k_size + k  ] * sqD_jPi[- vec_k_size + k  ]
+            + A_jik[15] * x_jPi[               k-1] * sqD_jPi[               k-1]
+            + A_jik[16] * x_jPi[               k  ] * sqD_jPi[               k  ]
+            + A_jik[17] * x_jPi[               k+1] * sqD_jPi[               k+1]
+            + A_jik[18] * x_jPi[  vec_k_size + k  ] * sqD_jPi[  vec_k_size + k  ];
+        y_jik[k] = tmp * sqD_jik[k];
+        A_jik += 19;// move the ptr
+    }
+}
+
 // template<typename idx_t, typename data_t, typename calc_t>
 // void inline SOA_spmv_3d19(const idx_t num,
 //     const idx_t vec_k_size , const idx_t vec_ki_size,
@@ -226,7 +262,7 @@ void inline AOS_point_backward_ALL_3d19(const idx_t num,
 template<typename idx_t, typename data_t, typename calc_t>
 void inline AOS_line_forward_zero_3d19(const idx_t num,
     const idx_t vec_k_size, const idx_t vec_ki_size,
-    const data_t * L_jik, const data_t * dummy, const calc_t * b_jik, const calc_t * x_jik, calc_t * rhs)
+    const data_t * L_jik, const data_t * dummy, const calc_t * b_jik, const calc_t * x_jik, const calc_t * sqD_jik, calc_t * rhs)
 {
     const calc_t* x_jNiZ = x_jik  - vec_ki_size,
                 * x_jZiN = x_jik  - vec_k_size;
@@ -246,9 +282,33 @@ void inline AOS_line_forward_zero_3d19(const idx_t num,
 }
 
 template<typename idx_t, typename data_t, typename calc_t>
+void inline AOS_line_forward_scaled_zero_3d19(const idx_t num,
+    const idx_t vec_k_size, const idx_t vec_ki_size,
+    const data_t * L_jik, const data_t * dummy, const calc_t * b_jik, const calc_t * x_jik, const calc_t * sqD_jik, calc_t * rhs)
+{
+    const calc_t* x_jNiZ = x_jik  - vec_ki_size,
+                * x_jZiN = x_jik  - vec_k_size;
+    const calc_t* sqD_jNiZ = sqD_jik - vec_ki_size,
+                * sqD_jZiN = sqD_jik - vec_k_size ;
+    for (idx_t k = 0; k < num; k++) {
+        calc_t tmp = 
+            + L_jik[0] * x_jNiZ[ - vec_k_size + k  ] * sqD_jNiZ[ - vec_k_size + k  ]
+            + L_jik[1] * x_jNiZ[                k-1] * sqD_jNiZ[                k-1]
+            + L_jik[2] * x_jNiZ[                k  ] * sqD_jNiZ[                k  ]
+            + L_jik[3] * x_jNiZ[                k+1] * sqD_jNiZ[                k+1]
+            + L_jik[4] * x_jNiZ[   vec_k_size + k  ] * sqD_jNiZ[   vec_k_size + k  ]
+            + L_jik[5] * x_jZiN[                k-1] * sqD_jZiN[                k-1]
+            + L_jik[6] * x_jZiN[                k  ] * sqD_jZiN[                k  ]
+            + L_jik[7] * x_jZiN[                k+1] * sqD_jZiN[                k+1];// L * x_{k+1}
+        rhs[k] = b_jik[k] / sqD_jik[k] - tmp;// b - L*x_{k+1}
+        L_jik += 8;// 下三角部分包含对角线
+    }
+}
+
+template<typename idx_t, typename data_t, typename calc_t>
 void inline AOS_line_backward_zero_3d19(const idx_t num,
     const idx_t vec_k_size, const idx_t vec_ki_size,
-    const data_t * dummy, const data_t * U_jik, const calc_t * b_jik, const calc_t * x_jik, calc_t * rhs)
+    const data_t * dummy, const data_t * U_jik, const calc_t * b_jik, const calc_t * x_jik, const calc_t * sqD_jik, calc_t * rhs)
 {
     const calc_t* x_jPiZ  = x_jik   + vec_ki_size,
                 * x_jZiP  = x_jik   + vec_k_size;
@@ -268,9 +328,33 @@ void inline AOS_line_backward_zero_3d19(const idx_t num,
 }
 
 template<typename idx_t, typename data_t, typename calc_t>
+void inline AOS_line_backward_scaled_zero_3d19(const idx_t num,
+    const idx_t vec_k_size, const idx_t vec_ki_size,
+    const data_t * dummy, const data_t * U_jik, const calc_t * b_jik, const calc_t * x_jik, const calc_t * sqD_jik, calc_t * rhs)
+{
+    const calc_t* x_jPiZ  = x_jik   + vec_ki_size,
+                * x_jZiP  = x_jik   + vec_k_size;
+    const calc_t* sqD_jPiZ = sqD_jik + vec_ki_size,
+                * sqD_jZiP = sqD_jik + vec_k_size ;
+    for (idx_t k = 0; k < num; k++) {
+        calc_t tmp =
+            + U_jik[0] * x_jZiP[                k-1] * sqD_jZiP[                k-1]
+            + U_jik[1] * x_jZiP[                k  ] * sqD_jZiP[                k  ]
+            + U_jik[2] * x_jZiP[                k+1] * sqD_jZiP[                k+1]
+            + U_jik[3] * x_jPiZ[ - vec_k_size + k  ] * sqD_jPiZ[ - vec_k_size + k  ]
+            + U_jik[4] * x_jPiZ[                k-1] * sqD_jPiZ[                k-1]
+            + U_jik[5] * x_jPiZ[                k  ] * sqD_jPiZ[                k  ]
+            + U_jik[6] * x_jPiZ[                k+1] * sqD_jPiZ[                k+1]
+            + U_jik[7] * x_jPiZ[   vec_k_size + k  ] * sqD_jPiZ[   vec_k_size + k  ];
+        rhs[k] = b_jik[k] / sqD_jik[k] - tmp;
+        U_jik += 8;
+    }
+}
+
+template<typename idx_t, typename data_t, typename calc_t>
 void inline AOS_line_ALL_3d19(const idx_t num,
     const idx_t vec_k_size, const idx_t vec_ki_size,
-    const data_t * L_jik, const data_t * U_jik, const calc_t * b_jik, const calc_t * x_jik, calc_t * rhs)
+    const data_t * L_jik, const data_t * U_jik, const calc_t * b_jik, const calc_t * x_jik, const calc_t * sqD_jik, calc_t * rhs)
 {
     const calc_t* x_jNiZ  = x_jik - vec_ki_size, * x_jZiN = x_jik - vec_k_size,
                 * x_jPiZ  = x_jik + vec_ki_size, * x_jZiP = x_jik + vec_k_size;
@@ -293,6 +377,39 @@ void inline AOS_line_ALL_3d19(const idx_t num,
             + U_jik[6] * x_jPiZ[                k+1]
             + U_jik[7] * x_jPiZ[   vec_k_size + k  ];
         rhs[k] = b_jik[k] - tmp;
+        L_jik += 8;
+        U_jik += 8;
+    }
+}
+
+template<typename idx_t, typename data_t, typename calc_t>
+void inline AOS_line_ALL_scaled_3d19(const idx_t num,
+    const idx_t vec_k_size, const idx_t vec_ki_size,
+    const data_t * L_jik, const data_t * U_jik, const calc_t * b_jik, const calc_t * x_jik, const calc_t * sqD_jik, calc_t * rhs)
+{
+    const calc_t* x_jNiZ  = x_jik - vec_ki_size, * x_jZiN = x_jik - vec_k_size,
+                * x_jPiZ  = x_jik + vec_ki_size, * x_jZiP = x_jik + vec_k_size;
+    const calc_t* sqD_jNiZ = sqD_jik - vec_ki_size, * sqD_jZiN = sqD_jik - vec_k_size,
+                * sqD_jPiZ = sqD_jik + vec_ki_size, * sqD_jZiP = sqD_jik + vec_k_size;
+    for (idx_t k = 0; k < num; k++) {
+        calc_t tmp =
+            + L_jik[0] * x_jNiZ[ - vec_k_size + k  ] * sqD_jNiZ[ - vec_k_size + k  ]
+            + L_jik[1] * x_jNiZ[                k-1] * sqD_jNiZ[                k-1]
+            + L_jik[2] * x_jNiZ[                k  ] * sqD_jNiZ[                k  ]
+            + L_jik[3] * x_jNiZ[                k+1] * sqD_jNiZ[                k+1]
+            + L_jik[4] * x_jNiZ[   vec_k_size + k  ] * sqD_jNiZ[   vec_k_size + k  ]
+            + L_jik[5] * x_jZiN[                k-1] * sqD_jZiN[                k-1]
+            + L_jik[6] * x_jZiN[                k  ] * sqD_jZiN[                k  ]
+            + L_jik[7] * x_jZiN[                k+1] * sqD_jZiN[                k+1]
+            + U_jik[0] * x_jZiP[                k-1] * sqD_jZiP[                k-1]
+            + U_jik[1] * x_jZiP[                k  ] * sqD_jZiP[                k  ]
+            + U_jik[2] * x_jZiP[                k+1] * sqD_jZiP[                k+1]
+            + U_jik[3] * x_jPiZ[ - vec_k_size + k  ] * sqD_jPiZ[ - vec_k_size + k  ]
+            + U_jik[4] * x_jPiZ[                k-1] * sqD_jPiZ[                k-1]
+            + U_jik[5] * x_jPiZ[                k  ] * sqD_jPiZ[                k  ]
+            + U_jik[6] * x_jPiZ[                k+1] * sqD_jPiZ[                k+1]
+            + U_jik[7] * x_jPiZ[   vec_k_size + k  ] * sqD_jPiZ[   vec_k_size + k  ];
+        rhs[k] = b_jik[k] / sqD_jik[k] - tmp;
         L_jik += 8;
         U_jik += 8;
     }
@@ -355,7 +472,7 @@ void inline AOS_ilu_backward_zero_3d19(const idx_t dim_2, const idx_t dim_1,
 #define GROUP_LEN 8
 void inline SOA_spmv_3d19_Cal32Stg16(const int num,
     const int vec_k_size , const int vec_ki_size,
-    const __fp16 * Diags[5], const float * x9, float * y_jik)
+    const __fp16 * Diags[5], const float * x9, float * y_jik, const float * sqD_jik)
 {
     const __fp16* A0_3 = Diags[0], * A4_7 = Diags[1], * A8_11 = Diags[2], * A12_15 = Diags[3], * A16_18 = Diags[4];
     const float * x2 = x9 - vec_ki_size, * x16 = x9 + vec_ki_size,
@@ -530,7 +647,7 @@ void inline SOA_spmv_3d19_Cal32Stg16(const int num,
         y_jik[k] = 
             A0_3[0] * x0[k] + A0_3[1] * x1[k] + A0_3[2] * x2[k] + A0_3[3] * x3[k]
         +   A4_7[0] * x4[k] + A4_7[1] * x5[k] + A4_7[2] * x6[k] + A4_7[3] * x7[k]
-        +   A8_11[0]* x8[k] + A8_11[1]* x9[k] + A8_11[2]* x9[k] + A8_11[3]* x9[k]
+        +   A8_11[0]* x8[k] + A8_11[1]* x9[k] + A8_11[2]* x10[k] + A8_11[3]*x11[k]
         +   A12_15[0]*x12[k]+ A12_15[1]*x13[k]+ A12_15[2]*x14[k]+ A12_15[3]*x15[k]
         +   A16_18[0]*x16[k]+ A16_18[1]*x17[k]+ A16_18[2]*x18[k];
         A0_3 += 4; A4_7 += 4; A8_11+= 4; A12_15+= 4;
@@ -538,6 +655,277 @@ void inline SOA_spmv_3d19_Cal32Stg16(const int num,
     }
 }
 
+void inline SOA_spmv_3d19_scaled_Cal32Stg16(const int num,
+    const int vec_k_size , const int vec_ki_size,
+    const __fp16 * Diags[5], const float * x9, float * y_jik, const float * sqD9)
+{
+    const __fp16* A0_3 = Diags[0], * A4_7 = Diags[1], * A8_11 = Diags[2], * A12_15 = Diags[3], * A16_18 = Diags[4];
+    const float * x2 = x9 - vec_ki_size, * x16 = x9 + vec_ki_size,
+                * x6 = x9 - vec_k_size , * x12 = x9 + vec_k_size ,
+                * x8 = x9 - 1          , * x10 = x9 + 1          ;
+    const float * x0 = x2 - vec_k_size , * x4  = x2 + vec_k_size ,
+                * x1 = x2 - 1          , * x3  = x2 + 1          ,
+                * x14= x16- vec_k_size , * x18 = x16+ vec_k_size ,
+                * x15= x16- 1          , * x17 = x16+ 1          ,
+                * x5 = x6 - 1          , * x7  = x6 + 1          ,
+                * x11= x12- 1          , * x13 = x12+ 1          ;
+    const float * sqD2 = sqD9 - vec_ki_size, * sqD16 = sqD9 + vec_ki_size,
+                * sqD6 = sqD9 - vec_k_size , * sqD12 = sqD9 + vec_k_size ,
+                * sqD8 = sqD9 - 1          , * sqD10 = sqD9 + 1          ;
+    const float * sqD0 = sqD2 - vec_k_size , * sqD4  = sqD2 + vec_k_size ,
+                * sqD1 = sqD2 - 1          , * sqD3  = sqD2 + 1          ,
+                * sqD14= sqD16- vec_k_size , * sqD18 = sqD16+ vec_k_size ,
+                * sqD15= sqD16- 1          , * sqD17 = sqD16+ 1          ,
+                * sqD5 = sqD6 - 1          , * sqD7  = sqD6 + 1          ,
+                * sqD11= sqD12- 1          , * sqD13 = sqD12+ 1          ;
+    float32x4_t A0_32_0, A1_32_0, A2_32_0, A3_32_0;
+    float32x4_t x0_32_0, x1_32_0, x2_32_0, x3_32_0, sqD0_32_0, sqD1_32_0, sqD2_32_0, sqD3_32_0, myQ0;
+    float32x4_t tmp_0;
+    // A0_3每个GROUP会读取8*4=32个半精度数，即一条cacheline，x*等会读取8个单精度数 32B
+    static_assert(GROUP_LEN == 8 && NEON_LEN == 4);
+    int k = 0, max_gk = num & (~(GROUP_LEN - 1)), max_nk = num & (~(NEON_LEN - 1));
+    for ( ; k < max_gk; k += GROUP_LEN) {
+        float16x8x4_t A0_3_16;
+        float16x8x3_t A16_18_16;
+        float32x4_t A0_32_1, A1_32_1, A2_32_1, A3_32_1, x0_32_1, x1_32_1, x2_32_1, x3_32_1, tmp_1,
+                    sqD0_32_1, sqD1_32_1, sqD2_32_1, sqD3_32_1, myQ1;
+        tmp_0 = vdupq_n_f32(0.0); tmp_1 = vdupq_n_f32(0.0);
+        // A0~A3
+        A0_3_16 = vld4q_f16(A0_3); A0_3 += GROUP_LEN * 4; __builtin_prefetch(A0_3 + GROUP_LEN * 16, 0, 0);
+        A0_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[0])); A0_32_1 = vcvt_high_f32_f16(A0_3_16.val[0]);
+        A1_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[1])); A1_32_1 = vcvt_high_f32_f16(A0_3_16.val[1]);
+        A2_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[2])); A2_32_1 = vcvt_high_f32_f16(A0_3_16.val[2]);
+        A3_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[3])); A3_32_1 = vcvt_high_f32_f16(A0_3_16.val[3]);
+        x0_32_0 = vld1q_f32(x0); x0 += NEON_LEN; x0_32_1 = vld1q_f32(x0); x0 += NEON_LEN; __builtin_prefetch(x0, 0);
+        x1_32_0 = vld1q_f32(x1); x1 += NEON_LEN; x1_32_1 = vld1q_f32(x1); x1 += NEON_LEN; __builtin_prefetch(x1, 0);
+        x2_32_0 = vld1q_f32(x2); x2 += NEON_LEN; x2_32_1 = vld1q_f32(x2); x2 += NEON_LEN; __builtin_prefetch(x2, 0);
+        x3_32_0 = vld1q_f32(x3); x3 += NEON_LEN; x3_32_1 = vld1q_f32(x3); x3 += NEON_LEN; __builtin_prefetch(x3, 0);
+        sqD0_32_0 = vld1q_f32(sqD0); sqD0 += NEON_LEN; sqD0_32_1 = vld1q_f32(sqD0); sqD0 += NEON_LEN; __builtin_prefetch(sqD0, 0);
+        sqD1_32_0 = vld1q_f32(sqD1); sqD1 += NEON_LEN; sqD1_32_1 = vld1q_f32(sqD1); sqD1 += NEON_LEN; __builtin_prefetch(sqD1, 0);
+        sqD2_32_0 = vld1q_f32(sqD2); sqD2 += NEON_LEN; sqD2_32_1 = vld1q_f32(sqD2); sqD2 += NEON_LEN; __builtin_prefetch(sqD2, 0);
+        sqD3_32_0 = vld1q_f32(sqD3); sqD3 += NEON_LEN; sqD3_32_1 = vld1q_f32(sqD3); sqD3 += NEON_LEN; __builtin_prefetch(sqD3, 0);
+        A0_32_0 = vmulq_f32(A0_32_0, sqD0_32_0); A0_32_1 = vmulq_f32(A0_32_1, sqD0_32_1);
+        A1_32_0 = vmulq_f32(A1_32_0, sqD1_32_0); A1_32_1 = vmulq_f32(A1_32_1, sqD1_32_1);
+        A2_32_0 = vmulq_f32(A2_32_0, sqD2_32_0); A2_32_1 = vmulq_f32(A2_32_1, sqD2_32_1);
+        A3_32_0 = vmulq_f32(A3_32_0, sqD3_32_0); A3_32_1 = vmulq_f32(A3_32_1, sqD3_32_1);
+        tmp_0 = vmlaq_f32(tmp_0, A0_32_0 , x0_32_0); tmp_1 = vmlaq_f32(tmp_1, A0_32_1, x0_32_1);
+        tmp_0 = vmlaq_f32(tmp_0, A1_32_0 , x1_32_0); tmp_1 = vmlaq_f32(tmp_1, A1_32_1, x1_32_1);
+        tmp_0 = vmlaq_f32(tmp_0, A2_32_0 , x2_32_0); tmp_1 = vmlaq_f32(tmp_1, A2_32_1, x2_32_1);
+        tmp_0 = vmlaq_f32(tmp_0, A3_32_0 , x3_32_0); tmp_1 = vmlaq_f32(tmp_1, A3_32_1, x3_32_1);
+        // A4~A7
+        A0_3_16 = vld4q_f16(A4_7); A4_7 += GROUP_LEN * 4; __builtin_prefetch(A4_7 + GROUP_LEN * 16, 0, 0);
+        A0_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[0])); A0_32_1 = vcvt_high_f32_f16(A0_3_16.val[0]);
+        A1_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[1])); A1_32_1 = vcvt_high_f32_f16(A0_3_16.val[1]);
+        A2_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[2])); A2_32_1 = vcvt_high_f32_f16(A0_3_16.val[2]);
+        A3_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[3])); A3_32_1 = vcvt_high_f32_f16(A0_3_16.val[3]);
+        x0_32_0 = vld1q_f32(x4); x4 += NEON_LEN; x0_32_1 = vld1q_f32(x4); x4 += NEON_LEN; __builtin_prefetch(x4, 0);
+        x1_32_0 = vld1q_f32(x5); x5 += NEON_LEN; x1_32_1 = vld1q_f32(x5); x5 += NEON_LEN; __builtin_prefetch(x5, 0);
+        x2_32_0 = vld1q_f32(x6); x6 += NEON_LEN; x2_32_1 = vld1q_f32(x6); x6 += NEON_LEN; __builtin_prefetch(x6, 0);
+        x3_32_0 = vld1q_f32(x7); x7 += NEON_LEN; x3_32_1 = vld1q_f32(x7); x7 += NEON_LEN; __builtin_prefetch(x7, 0);
+        sqD0_32_0 = vld1q_f32(sqD4); sqD4 += NEON_LEN; sqD0_32_1 = vld1q_f32(sqD4); sqD4 += NEON_LEN; __builtin_prefetch(sqD4, 0);
+        sqD1_32_0 = vld1q_f32(sqD5); sqD5 += NEON_LEN; sqD1_32_1 = vld1q_f32(sqD5); sqD5 += NEON_LEN; __builtin_prefetch(sqD5, 0);
+        sqD2_32_0 = vld1q_f32(sqD6); sqD6 += NEON_LEN; sqD2_32_1 = vld1q_f32(sqD6); sqD6 += NEON_LEN; __builtin_prefetch(sqD6, 0);
+        sqD3_32_0 = vld1q_f32(sqD7); sqD7 += NEON_LEN; sqD3_32_1 = vld1q_f32(sqD7); sqD7 += NEON_LEN; __builtin_prefetch(sqD7, 0);
+        A0_32_0 = vmulq_f32(A0_32_0, sqD0_32_0); A0_32_1 = vmulq_f32(A0_32_1, sqD0_32_1);
+        A1_32_0 = vmulq_f32(A1_32_0, sqD1_32_0); A1_32_1 = vmulq_f32(A1_32_1, sqD1_32_1);
+        A2_32_0 = vmulq_f32(A2_32_0, sqD2_32_0); A2_32_1 = vmulq_f32(A2_32_1, sqD2_32_1);
+        A3_32_0 = vmulq_f32(A3_32_0, sqD3_32_0); A3_32_1 = vmulq_f32(A3_32_1, sqD3_32_1);
+        tmp_0 = vmlaq_f32(tmp_0, A0_32_0 , x0_32_0); tmp_1 = vmlaq_f32(tmp_1, A0_32_1, x0_32_1);
+        tmp_0 = vmlaq_f32(tmp_0, A1_32_0 , x1_32_0); tmp_1 = vmlaq_f32(tmp_1, A1_32_1, x1_32_1);
+        tmp_0 = vmlaq_f32(tmp_0, A2_32_0 , x2_32_0); tmp_1 = vmlaq_f32(tmp_1, A2_32_1, x2_32_1);
+        tmp_0 = vmlaq_f32(tmp_0, A3_32_0 , x3_32_0); tmp_1 = vmlaq_f32(tmp_1, A3_32_1, x3_32_1);
+        // A8~A11
+        A0_3_16 = vld4q_f16(A8_11); A8_11  += GROUP_LEN * 4; __builtin_prefetch(A8_11 + GROUP_LEN * 16, 0, 0);
+        A0_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[0])); A0_32_1 = vcvt_high_f32_f16(A0_3_16.val[0]);
+        A1_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[1])); A1_32_1 = vcvt_high_f32_f16(A0_3_16.val[1]);
+        A2_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[2])); A2_32_1 = vcvt_high_f32_f16(A0_3_16.val[2]);
+        A3_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[3])); A3_32_1 = vcvt_high_f32_f16(A0_3_16.val[3]);
+        x0_32_0 = vld1q_f32(x8) ; x8  += NEON_LEN; x0_32_1 = vld1q_f32(x8);  x8  += NEON_LEN; __builtin_prefetch(x8, 0);
+        x1_32_0 = vld1q_f32(x9) ; x9  += NEON_LEN; x1_32_1 = vld1q_f32(x9);  x9  += NEON_LEN; __builtin_prefetch(x9, 0);
+        x2_32_0 = vld1q_f32(x10); x10 += NEON_LEN; x2_32_1 = vld1q_f32(x10); x10 += NEON_LEN; __builtin_prefetch(x10,0);
+        x3_32_0 = vld1q_f32(x11); x11 += NEON_LEN; x3_32_1 = vld1q_f32(x11); x11 += NEON_LEN; __builtin_prefetch(x11,0);
+        sqD0_32_0 = vld1q_f32(sqD8) ; sqD8  += NEON_LEN; sqD0_32_1 = vld1q_f32(sqD8);  sqD8  += NEON_LEN; __builtin_prefetch(sqD8, 0);
+        sqD1_32_0 = vld1q_f32(sqD9) ; sqD9  += NEON_LEN; sqD1_32_1 = vld1q_f32(sqD9);  sqD9  += NEON_LEN; __builtin_prefetch(sqD9, 0);
+        myQ0 = sqD1_32_0; myQ1 = sqD1_32_1;// 拷贝待用
+        sqD2_32_0 = vld1q_f32(sqD10); sqD10 += NEON_LEN; sqD2_32_1 = vld1q_f32(sqD10); sqD10 += NEON_LEN; __builtin_prefetch(sqD10,0);
+        sqD3_32_0 = vld1q_f32(sqD11); sqD11 += NEON_LEN; sqD3_32_1 = vld1q_f32(sqD11); sqD11 += NEON_LEN; __builtin_prefetch(sqD11,0);
+        A0_32_0 = vmulq_f32(A0_32_0, sqD0_32_0); A0_32_1 = vmulq_f32(A0_32_1, sqD0_32_1);
+        A1_32_0 = vmulq_f32(A1_32_0, sqD1_32_0); A1_32_1 = vmulq_f32(A1_32_1, sqD1_32_1);
+        A2_32_0 = vmulq_f32(A2_32_0, sqD2_32_0); A2_32_1 = vmulq_f32(A2_32_1, sqD2_32_1);
+        A3_32_0 = vmulq_f32(A3_32_0, sqD3_32_0); A3_32_1 = vmulq_f32(A3_32_1, sqD3_32_1);
+        tmp_0 = vmlaq_f32(tmp_0, A0_32_0 , x0_32_0); tmp_1 = vmlaq_f32(tmp_1, A0_32_1, x0_32_1);
+        tmp_0 = vmlaq_f32(tmp_0, A1_32_0 , x1_32_0); tmp_1 = vmlaq_f32(tmp_1, A1_32_1, x1_32_1);
+        tmp_0 = vmlaq_f32(tmp_0, A2_32_0 , x2_32_0); tmp_1 = vmlaq_f32(tmp_1, A2_32_1, x2_32_1);
+        tmp_0 = vmlaq_f32(tmp_0, A3_32_0 , x3_32_0); tmp_1 = vmlaq_f32(tmp_1, A3_32_1, x3_32_1);
+        // A12~A15
+        A0_3_16 = vld4q_f16(A12_15); A12_15 += GROUP_LEN * 4; __builtin_prefetch(A12_15 + GROUP_LEN * 16, 0, 0);
+        A0_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[0])); A0_32_1 = vcvt_high_f32_f16(A0_3_16.val[0]);
+        A1_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[1])); A1_32_1 = vcvt_high_f32_f16(A0_3_16.val[1]);
+        A2_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[2])); A2_32_1 = vcvt_high_f32_f16(A0_3_16.val[2]);
+        A3_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[3])); A3_32_1 = vcvt_high_f32_f16(A0_3_16.val[3]);
+        x0_32_0 = vld1q_f32(x12); x12 += NEON_LEN; x0_32_1 = vld1q_f32(x12); x12 += NEON_LEN; __builtin_prefetch(x12,0);
+        x1_32_0 = vld1q_f32(x13); x13 += NEON_LEN; x1_32_1 = vld1q_f32(x13); x13 += NEON_LEN; __builtin_prefetch(x13,0);
+        x2_32_0 = vld1q_f32(x14); x14 += NEON_LEN; x2_32_1 = vld1q_f32(x14); x14 += NEON_LEN; __builtin_prefetch(x14,0);
+        x3_32_0 = vld1q_f32(x15); x15 += NEON_LEN; x3_32_1 = vld1q_f32(x15); x15 += NEON_LEN; __builtin_prefetch(x15,0);
+        sqD0_32_0 = vld1q_f32(sqD12); sqD12 += NEON_LEN; sqD0_32_1 = vld1q_f32(sqD12); sqD12 += NEON_LEN; __builtin_prefetch(sqD12,0);
+        sqD1_32_0 = vld1q_f32(sqD13); sqD13 += NEON_LEN; sqD1_32_1 = vld1q_f32(sqD13); sqD13 += NEON_LEN; __builtin_prefetch(sqD13,0);
+        sqD2_32_0 = vld1q_f32(sqD14); sqD14 += NEON_LEN; sqD2_32_1 = vld1q_f32(sqD14); sqD14 += NEON_LEN; __builtin_prefetch(sqD14,0);
+        sqD3_32_0 = vld1q_f32(sqD15); sqD15 += NEON_LEN; sqD3_32_1 = vld1q_f32(sqD15); sqD15 += NEON_LEN; __builtin_prefetch(sqD15,0);
+        A0_32_0 = vmulq_f32(A0_32_0, sqD0_32_0); A0_32_1 = vmulq_f32(A0_32_1, sqD0_32_1);
+        A1_32_0 = vmulq_f32(A1_32_0, sqD1_32_0); A1_32_1 = vmulq_f32(A1_32_1, sqD1_32_1);
+        A2_32_0 = vmulq_f32(A2_32_0, sqD2_32_0); A2_32_1 = vmulq_f32(A2_32_1, sqD2_32_1);
+        A3_32_0 = vmulq_f32(A3_32_0, sqD3_32_0); A3_32_1 = vmulq_f32(A3_32_1, sqD3_32_1);
+        tmp_0 = vmlaq_f32(tmp_0, A0_32_0 , x0_32_0); tmp_1 = vmlaq_f32(tmp_1, A0_32_1, x0_32_1);
+        tmp_0 = vmlaq_f32(tmp_0, A1_32_0 , x1_32_0); tmp_1 = vmlaq_f32(tmp_1, A1_32_1, x1_32_1);
+        tmp_0 = vmlaq_f32(tmp_0, A2_32_0 , x2_32_0); tmp_1 = vmlaq_f32(tmp_1, A2_32_1, x2_32_1);
+        tmp_0 = vmlaq_f32(tmp_0, A3_32_0 , x3_32_0); tmp_1 = vmlaq_f32(tmp_1, A3_32_1, x3_32_1);
+        // A16~A18
+        A16_18_16 = vld3q_f16(A16_18);  A16_18  += GROUP_LEN * 3; __builtin_prefetch(A16_18 + GROUP_LEN * 12, 0, 0);
+        A0_32_0 = vcvt_f32_f16(vget_low_f16(A16_18_16.val[0])); A0_32_1 = vcvt_high_f32_f16(A16_18_16.val[0]);
+        A1_32_0 = vcvt_f32_f16(vget_low_f16(A16_18_16.val[1])); A1_32_1 = vcvt_high_f32_f16(A16_18_16.val[1]);
+        A2_32_0 = vcvt_f32_f16(vget_low_f16(A16_18_16.val[2])); A2_32_1 = vcvt_high_f32_f16(A16_18_16.val[2]);
+        x0_32_0 = vld1q_f32(x16); x16 += NEON_LEN; x0_32_1 = vld1q_f32(x16); x16 += NEON_LEN; __builtin_prefetch(x16,0);
+        x1_32_0 = vld1q_f32(x17); x17 += NEON_LEN; x1_32_1 = vld1q_f32(x17); x17 += NEON_LEN; __builtin_prefetch(x17,0);
+        x2_32_0 = vld1q_f32(x18); x18 += NEON_LEN; x2_32_1 = vld1q_f32(x18); x18 += NEON_LEN; __builtin_prefetch(x18,0);
+        sqD0_32_0 = vld1q_f32(sqD16); sqD16 += NEON_LEN; sqD0_32_1 = vld1q_f32(sqD16); sqD16 += NEON_LEN; __builtin_prefetch(sqD16,0);
+        sqD1_32_0 = vld1q_f32(sqD17); sqD17 += NEON_LEN; sqD1_32_1 = vld1q_f32(sqD17); sqD17 += NEON_LEN; __builtin_prefetch(sqD17,0);
+        sqD2_32_0 = vld1q_f32(sqD18); sqD18 += NEON_LEN; sqD2_32_1 = vld1q_f32(sqD18); sqD18 += NEON_LEN; __builtin_prefetch(sqD18,0);
+        A0_32_0 = vmulq_f32(A0_32_0, sqD0_32_0); A0_32_1 = vmulq_f32(A0_32_1, sqD0_32_1);
+        A1_32_0 = vmulq_f32(A1_32_0, sqD1_32_0); A1_32_1 = vmulq_f32(A1_32_1, sqD1_32_1);
+        A2_32_0 = vmulq_f32(A2_32_0, sqD2_32_0); A2_32_1 = vmulq_f32(A2_32_1, sqD2_32_1);
+        tmp_0 = vmlaq_f32(tmp_0, A0_32_0 , x0_32_0); tmp_1 = vmlaq_f32(tmp_1, A0_32_1, x0_32_1);
+        tmp_0 = vmlaq_f32(tmp_0, A1_32_0 , x1_32_0); tmp_1 = vmlaq_f32(tmp_1, A1_32_1, x1_32_1);
+        tmp_0 = vmlaq_f32(tmp_0, A2_32_0 , x2_32_0); tmp_1 = vmlaq_f32(tmp_1, A2_32_1, x2_32_1);
+
+        tmp_0 = vmulq_f32(tmp_0, myQ0); vst1q_f32(y_jik           , tmp_0);
+        tmp_1 = vmulq_f32(tmp_1, myQ1); vst1q_f32(y_jik + NEON_LEN, tmp_1);
+        y_jik += GROUP_LEN; __builtin_prefetch(y_jik,1);
+    }
+    for ( ; k < max_nk; k += NEON_LEN) {
+        float16x4x4_t A0_3_16;
+        float16x4x3_t A16_18_16;
+        tmp_0 = vdupq_n_f32(0.0);
+        // A0~A3
+        A0_3_16 = vld4_f16(A0_3); A0_3 += NEON_LEN * 4; __builtin_prefetch(A0_3 + NEON_LEN * 16, 0, 0);
+        A0_32_0 = vcvt_f32_f16(A0_3_16.val[0]);
+        A1_32_0 = vcvt_f32_f16(A0_3_16.val[1]);
+        A2_32_0 = vcvt_f32_f16(A0_3_16.val[2]);
+        A3_32_0 = vcvt_f32_f16(A0_3_16.val[3]);
+        x0_32_0 = vld1q_f32(x0); x0 += NEON_LEN; __builtin_prefetch(x0, 0);
+        x1_32_0 = vld1q_f32(x1); x1 += NEON_LEN; __builtin_prefetch(x1, 0);
+        x2_32_0 = vld1q_f32(x2); x2 += NEON_LEN; __builtin_prefetch(x2, 0);
+        x3_32_0 = vld1q_f32(x3); x3 += NEON_LEN; __builtin_prefetch(x3, 0);
+        sqD0_32_0 = vld1q_f32(sqD0); sqD0 += NEON_LEN; __builtin_prefetch(sqD0, 0);
+        sqD1_32_0 = vld1q_f32(sqD1); sqD1 += NEON_LEN; __builtin_prefetch(sqD1, 0);
+        sqD2_32_0 = vld1q_f32(sqD2); sqD2 += NEON_LEN; __builtin_prefetch(sqD2, 0);
+        sqD3_32_0 = vld1q_f32(sqD3); sqD3 += NEON_LEN; __builtin_prefetch(sqD3, 0);
+        A0_32_0 = vmulq_f32(A0_32_0, sqD0_32_0);
+        A1_32_0 = vmulq_f32(A1_32_0, sqD1_32_0);
+        A2_32_0 = vmulq_f32(A2_32_0, sqD2_32_0);
+        A3_32_0 = vmulq_f32(A3_32_0, sqD3_32_0);
+        tmp_0 = vmlaq_f32(tmp_0, A0_32_0 , x0_32_0);
+        tmp_0 = vmlaq_f32(tmp_0, A1_32_0 , x1_32_0);
+        tmp_0 = vmlaq_f32(tmp_0, A2_32_0 , x2_32_0);
+        tmp_0 = vmlaq_f32(tmp_0, A3_32_0 , x3_32_0);
+        // A4~A7
+        A0_3_16 = vld4_f16(A4_7); A4_7 += NEON_LEN * 4; __builtin_prefetch(A4_7 + NEON_LEN * 16, 0, 0);
+        A0_32_0 = vcvt_f32_f16(A0_3_16.val[0]);
+        A1_32_0 = vcvt_f32_f16(A0_3_16.val[1]);
+        A2_32_0 = vcvt_f32_f16(A0_3_16.val[2]);
+        A3_32_0 = vcvt_f32_f16(A0_3_16.val[3]);
+        x0_32_0 = vld1q_f32(x4); x4 += NEON_LEN; __builtin_prefetch(x4, 0);
+        x1_32_0 = vld1q_f32(x5); x5 += NEON_LEN; __builtin_prefetch(x5, 0);
+        x2_32_0 = vld1q_f32(x6); x6 += NEON_LEN; __builtin_prefetch(x6, 0);
+        x3_32_0 = vld1q_f32(x7); x7 += NEON_LEN; __builtin_prefetch(x7, 0);
+        sqD0_32_0 = vld1q_f32(sqD4); sqD4 += NEON_LEN; __builtin_prefetch(sqD4, 0);
+        sqD1_32_0 = vld1q_f32(sqD5); sqD5 += NEON_LEN; __builtin_prefetch(sqD5, 0);
+        sqD2_32_0 = vld1q_f32(sqD6); sqD6 += NEON_LEN; __builtin_prefetch(sqD6, 0);
+        sqD3_32_0 = vld1q_f32(sqD7); sqD7 += NEON_LEN; __builtin_prefetch(sqD7, 0);
+        A0_32_0 = vmulq_f32(A0_32_0, sqD0_32_0);
+        A1_32_0 = vmulq_f32(A1_32_0, sqD1_32_0);
+        A2_32_0 = vmulq_f32(A2_32_0, sqD2_32_0);
+        A3_32_0 = vmulq_f32(A3_32_0, sqD3_32_0);
+        tmp_0 = vmlaq_f32(tmp_0, A0_32_0 , x0_32_0);
+        tmp_0 = vmlaq_f32(tmp_0, A1_32_0 , x1_32_0);
+        tmp_0 = vmlaq_f32(tmp_0, A2_32_0 , x2_32_0);
+        tmp_0 = vmlaq_f32(tmp_0, A3_32_0 , x3_32_0);
+        // A8~A11
+        A0_3_16 = vld4_f16(A8_11); A8_11 += NEON_LEN * 4; __builtin_prefetch(A8_11 + NEON_LEN * 16, 0, 0);
+        A0_32_0 = vcvt_f32_f16(A0_3_16.val[0]);
+        A1_32_0 = vcvt_f32_f16(A0_3_16.val[1]);
+        A2_32_0 = vcvt_f32_f16(A0_3_16.val[2]);
+        A3_32_0 = vcvt_f32_f16(A0_3_16.val[3]);
+        x0_32_0 = vld1q_f32(x8) ; x8  += NEON_LEN; __builtin_prefetch(x8, 0);
+        x1_32_0 = vld1q_f32(x9) ; x9  += NEON_LEN; __builtin_prefetch(x9, 0);
+        x2_32_0 = vld1q_f32(x10); x10 += NEON_LEN; __builtin_prefetch(x10,0);
+        x3_32_0 = vld1q_f32(x11); x11 += NEON_LEN; __builtin_prefetch(x11,0);
+        sqD0_32_0 = vld1q_f32(sqD8) ; sqD8  += NEON_LEN; __builtin_prefetch(sqD8, 0);
+        sqD1_32_0 = vld1q_f32(sqD9) ; sqD9  += NEON_LEN; __builtin_prefetch(sqD9, 0);
+        myQ0 = sqD1_32_0;
+        sqD2_32_0 = vld1q_f32(sqD10); sqD10 += NEON_LEN; __builtin_prefetch(sqD10,0);
+        sqD3_32_0 = vld1q_f32(sqD11); sqD11 += NEON_LEN; __builtin_prefetch(sqD11,0);
+        A0_32_0 = vmulq_f32(A0_32_0, sqD0_32_0);
+        A1_32_0 = vmulq_f32(A1_32_0, sqD1_32_0);
+        A2_32_0 = vmulq_f32(A2_32_0, sqD2_32_0);
+        A3_32_0 = vmulq_f32(A3_32_0, sqD3_32_0);
+        tmp_0 = vmlaq_f32(tmp_0, A0_32_0 , x0_32_0);
+        tmp_0 = vmlaq_f32(tmp_0, A1_32_0 , x1_32_0);
+        tmp_0 = vmlaq_f32(tmp_0, A2_32_0 , x2_32_0);
+        tmp_0 = vmlaq_f32(tmp_0, A3_32_0 , x3_32_0);
+        // A12~A15
+        A0_3_16 = vld4_f16(A12_15); A12_15 += NEON_LEN * 4; __builtin_prefetch(A12_15 + NEON_LEN * 16, 0, 0);
+        A0_32_0 = vcvt_f32_f16(A0_3_16.val[0]);
+        A1_32_0 = vcvt_f32_f16(A0_3_16.val[1]);
+        A2_32_0 = vcvt_f32_f16(A0_3_16.val[2]);
+        A3_32_0 = vcvt_f32_f16(A0_3_16.val[3]);
+        x0_32_0 = vld1q_f32(x12); x12 += NEON_LEN; __builtin_prefetch(x12,0);
+        x1_32_0 = vld1q_f32(x13); x13 += NEON_LEN; __builtin_prefetch(x13,0);
+        x2_32_0 = vld1q_f32(x14); x14 += NEON_LEN; __builtin_prefetch(x14,0);
+        x3_32_0 = vld1q_f32(x15); x15 += NEON_LEN; __builtin_prefetch(x15,0);
+        sqD0_32_0 = vld1q_f32(sqD12); sqD12 += NEON_LEN; __builtin_prefetch(sqD12,0);
+        sqD1_32_0 = vld1q_f32(sqD13); sqD13 += NEON_LEN; __builtin_prefetch(sqD13,0);
+        sqD2_32_0 = vld1q_f32(sqD14); sqD14 += NEON_LEN; __builtin_prefetch(sqD14,0);
+        sqD3_32_0 = vld1q_f32(sqD15); sqD15 += NEON_LEN; __builtin_prefetch(sqD15,0);
+        A0_32_0 = vmulq_f32(A0_32_0, sqD0_32_0);
+        A1_32_0 = vmulq_f32(A1_32_0, sqD1_32_0);
+        A2_32_0 = vmulq_f32(A2_32_0, sqD2_32_0);
+        A3_32_0 = vmulq_f32(A3_32_0, sqD3_32_0);
+        tmp_0 = vmlaq_f32(tmp_0, A0_32_0 , x0_32_0);
+        tmp_0 = vmlaq_f32(tmp_0, A1_32_0 , x1_32_0);
+        tmp_0 = vmlaq_f32(tmp_0, A2_32_0 , x2_32_0);
+        tmp_0 = vmlaq_f32(tmp_0, A3_32_0 , x3_32_0);
+        // A16~A18
+        A16_18_16 = vld3_f16(A16_18); A16_18 += NEON_LEN * 3; __builtin_prefetch(A16_18 + NEON_LEN * 12, 0, 0);
+        A0_32_0 = vcvt_f32_f16(A16_18_16.val[0]);
+        A1_32_0 = vcvt_f32_f16(A16_18_16.val[1]);
+        A2_32_0 = vcvt_f32_f16(A16_18_16.val[2]);
+        x0_32_0 = vld1q_f32(x16); x16 += NEON_LEN; __builtin_prefetch(x16,0);
+        x1_32_0 = vld1q_f32(x17); x17 += NEON_LEN; __builtin_prefetch(x17,0);
+        x2_32_0 = vld1q_f32(x18); x18 += NEON_LEN; __builtin_prefetch(x18,0);
+        sqD0_32_0 = vld1q_f32(sqD16); sqD16 += NEON_LEN; __builtin_prefetch(sqD16,0);
+        sqD1_32_0 = vld1q_f32(sqD17); sqD17 += NEON_LEN; __builtin_prefetch(sqD17,0);
+        sqD2_32_0 = vld1q_f32(sqD18); sqD18 += NEON_LEN; __builtin_prefetch(sqD18,0);
+        A0_32_0 = vmulq_f32(A0_32_0, sqD0_32_0);
+        A1_32_0 = vmulq_f32(A1_32_0, sqD1_32_0);
+        A2_32_0 = vmulq_f32(A2_32_0, sqD2_32_0);
+        tmp_0 = vmlaq_f32(tmp_0, A0_32_0 , x0_32_0);
+        tmp_0 = vmlaq_f32(tmp_0, A1_32_0 , x1_32_0);
+        tmp_0 = vmlaq_f32(tmp_0, A2_32_0 , x2_32_0);
+
+        tmp_0 = vmulq_f32(tmp_0, myQ0); vst1q_f32(y_jik           , tmp_0);
+        y_jik += NEON_LEN; __builtin_prefetch(y_jik,1);
+    }
+    for (k = 0; k < num - max_nk; k++) {// 做完剩下的元素
+        float tmp = 
+            A0_3[0] * x0[k] * sqD0[k] + A0_3[1] * x1[k] * sqD1[k] + A0_3[2] * x2[k] * sqD2[k] + A0_3[3] * x3[k] * sqD3[k]
+        +   A4_7[0] * x4[k] * sqD4[k] + A4_7[1] * x5[k] * sqD5[k] + A4_7[2] * x6[k] * sqD6[k] + A4_7[3] * x7[k] * sqD7[k]
+        +   A8_11[0]* x8[k] * sqD8[k] + A8_11[1]* x9[k] * sqD9[k] + A8_11[2]*x10[k] * sqD10[k]+ A8_11[3]* x11[k]* sqD11[k]
+        +   A12_15[0]*x12[k]* sqD12[k]+ A12_15[1]*x13[k]* sqD13[k]+ A12_15[2]*x14[k]* sqD14[k]+ A12_15[3]*x15[k]* sqD15[k]
+        +   A16_18[0]*x16[k]* sqD16[k]+ A16_18[1]*x17[k]* sqD17[k]+ A16_18[2]*x18[k]* sqD18[k];
+        y_jik[k] = tmp * sqD9[k];
+        A0_3 += 4; A4_7 += 4; A8_11+= 4; A12_15+= 4; A16_18+= 3;
+    }
+}
 
 // =================================== PGS =============================
 void inline SOA_point_forward_zero_3d19_Cal32Stg16(const int num,
@@ -1085,7 +1473,7 @@ void inline SOA_point_backward_ALL_3d19_Cal32Stg16(const int num,
 // =================================== LGS =============================
 void inline SOA_line_forward_zero_3d19_Cal32Stg16(const int num,
     const int vec_k_size, const int vec_ki_size,
-    const __fp16 * Diags[2], const float * b9, const float * x9, float * rhs)
+    const __fp16 * Diags[2], const float * b9, const float * x9, const float * sqD9, float * rhs)
 {// (0,1,2,3) (4,5,6,7)
     const __fp16* A0_3 = Diags[0], * A4_7 = Diags[1];
     const float * x2 = x9 - vec_ki_size, * x6 = x9 - vec_k_size;
@@ -1172,9 +1560,138 @@ void inline SOA_line_forward_zero_3d19_Cal32Stg16(const int num,
     }
 }
 
+void inline SOA_line_forward_scaled_zero_3d19_Cal32Stg16(const int num,
+    const int vec_k_size, const int vec_ki_size,
+    const __fp16 * Diags[2], const float * b9, const float * x9, const float * sqD9, float * rhs)
+{// (0,1,2,3) (4,5,6,7)
+    const __fp16* A0_3 = Diags[0], * A4_7 = Diags[1];
+    const float * x2 = x9 - vec_ki_size, * x6 = x9 - vec_k_size;
+    const float * x0 = x2 - vec_k_size , * x4 = x2 + vec_k_size,
+                * x1 = x2 - 1, * x3 = x2 + 1, * x5 = x6 - 1, * x7 = x6 + 1;
+    const float * sqD2 = sqD9 - vec_ki_size, * sqD6 = sqD9 - vec_k_size;
+    const float * sqD0 = sqD2 - vec_k_size , * sqD4 = sqD2 + vec_k_size,
+                * sqD1 = sqD2 - 1, * sqD3 = sqD2 + 1, * sqD5 = sqD6 - 1, * sqD7 = sqD6 + 1;
+    float32x4_t A0_32_0, A1_32_0, A2_32_0, A3_32_0;
+    float32x4_t x0_32_0, x1_32_0, x2_32_0, x3_32_0, sqD0_32_0, sqD1_32_0, sqD2_32_0, sqD3_32_0, myQ_0;
+    static_assert(GROUP_LEN == 8 && NEON_LEN == 4);
+    int k = 0, max_gk = num & (~(GROUP_LEN - 1)), max_nk = num & (~(NEON_LEN - 1));
+    for ( ; k < max_gk; k += GROUP_LEN) {
+        float16x8x4_t A0_3_16;
+        float32x4_t tmp_0, tmp_1, x0_32_1, x1_32_1, x2_32_1, x3_32_1, A0_32_1, A1_32_1, A2_32_1, A3_32_1;
+        float32x4_t sqD0_32_1, sqD1_32_1, sqD2_32_1, sqD3_32_1, myQ_1;
+        tmp_0   = vld1q_f32(b9); b9 += NEON_LEN; tmp_1   = vld1q_f32(b9); b9 += NEON_LEN; __builtin_prefetch(b9 + GROUP_LEN, 0);
+        myQ_0   = vld1q_f32(sqD9); sqD9 += NEON_LEN; myQ_1 = vld1q_f32(sqD9); sqD9 += NEON_LEN; __builtin_prefetch(sqD9 + GROUP_LEN, 0);
+        tmp_0 = vdivq_f32(tmp_0, myQ_0); tmp_1 = vdivq_f32(tmp_1, myQ_1);
+        // A0 ~ A3
+        A0_3_16 = vld4q_f16(A0_3); A0_3 += GROUP_LEN * 4; __builtin_prefetch(A0_3 + GROUP_LEN * 16, 0, 0);
+        A0_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[0])); A0_32_1 = vcvt_high_f32_f16(A0_3_16.val[0]);
+        A1_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[1])); A1_32_1 = vcvt_high_f32_f16(A0_3_16.val[1]);
+        A2_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[2])); A2_32_1 = vcvt_high_f32_f16(A0_3_16.val[2]);
+        A3_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[3])); A3_32_1 = vcvt_high_f32_f16(A0_3_16.val[3]);
+        x0_32_0 = vld1q_f32(x0); x0 += NEON_LEN; x0_32_1 = vld1q_f32(x0); x0 += NEON_LEN; __builtin_prefetch(x0 + GROUP_LEN, 0);
+        x1_32_0 = vld1q_f32(x1); x1 += NEON_LEN; x1_32_1 = vld1q_f32(x1); x1 += NEON_LEN; __builtin_prefetch(x1 + GROUP_LEN, 0);
+        x2_32_0 = vld1q_f32(x2); x2 += NEON_LEN; x2_32_1 = vld1q_f32(x2); x2 += NEON_LEN; __builtin_prefetch(x2 + GROUP_LEN, 0);
+        x3_32_0 = vld1q_f32(x3); x3 += NEON_LEN; x3_32_1 = vld1q_f32(x3); x3 += NEON_LEN; __builtin_prefetch(x3 + GROUP_LEN, 0);
+        sqD0_32_0 = vld1q_f32(sqD0); sqD0 += NEON_LEN; sqD0_32_1 = vld1q_f32(sqD0); sqD0 += NEON_LEN; __builtin_prefetch(sqD0 + GROUP_LEN, 0);
+        sqD1_32_0 = vld1q_f32(sqD1); sqD1 += NEON_LEN; sqD1_32_1 = vld1q_f32(sqD1); sqD1 += NEON_LEN; __builtin_prefetch(sqD1 + GROUP_LEN, 0);
+        sqD2_32_0 = vld1q_f32(sqD2); sqD2 += NEON_LEN; sqD2_32_1 = vld1q_f32(sqD2); sqD2 += NEON_LEN; __builtin_prefetch(sqD2 + GROUP_LEN, 0);
+        sqD3_32_0 = vld1q_f32(sqD3); sqD3 += NEON_LEN; sqD3_32_1 = vld1q_f32(sqD3); sqD3 += NEON_LEN; __builtin_prefetch(sqD3 + GROUP_LEN, 0);
+        A0_32_0 = vmulq_f32(A0_32_0, sqD0_32_0); A0_32_1 = vmulq_f32(A0_32_1, sqD0_32_1);
+        A1_32_0 = vmulq_f32(A1_32_0, sqD1_32_0); A1_32_1 = vmulq_f32(A1_32_1, sqD1_32_1);
+        A2_32_0 = vmulq_f32(A2_32_0, sqD2_32_0); A2_32_1 = vmulq_f32(A2_32_1, sqD2_32_1);
+        A3_32_0 = vmulq_f32(A3_32_0, sqD3_32_0); A3_32_1 = vmulq_f32(A3_32_1, sqD3_32_1);
+        tmp_0 = vmlsq_f32(tmp_0, A0_32_0 , x0_32_0); tmp_1 = vmlsq_f32(tmp_1, A0_32_1, x0_32_1);
+        tmp_0 = vmlsq_f32(tmp_0, A1_32_0 , x1_32_0); tmp_1 = vmlsq_f32(tmp_1, A1_32_1, x1_32_1);
+        tmp_0 = vmlsq_f32(tmp_0, A2_32_0 , x2_32_0); tmp_1 = vmlsq_f32(tmp_1, A2_32_1, x2_32_1);
+        tmp_0 = vmlsq_f32(tmp_0, A3_32_0 , x3_32_0); tmp_1 = vmlsq_f32(tmp_1, A3_32_1, x3_32_1);
+        // A4 ~ A7
+        A0_3_16 = vld4q_f16(A4_7); A4_7 += GROUP_LEN * 4; __builtin_prefetch(A4_7 + GROUP_LEN * 16, 0, 0);
+        A0_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[0])); A0_32_1 = vcvt_high_f32_f16(A0_3_16.val[0]);
+        A1_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[1])); A1_32_1 = vcvt_high_f32_f16(A0_3_16.val[1]);
+        A2_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[2])); A2_32_1 = vcvt_high_f32_f16(A0_3_16.val[2]);
+        A3_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[3])); A3_32_1 = vcvt_high_f32_f16(A0_3_16.val[3]);
+        x0_32_0 = vld1q_f32(x4); x4 += NEON_LEN; x0_32_1 = vld1q_f32(x4); x4 += NEON_LEN; __builtin_prefetch(x4 + GROUP_LEN, 0);
+        x1_32_0 = vld1q_f32(x5); x5 += NEON_LEN; x1_32_1 = vld1q_f32(x5); x5 += NEON_LEN; __builtin_prefetch(x5 + GROUP_LEN, 0);
+        x2_32_0 = vld1q_f32(x6); x6 += NEON_LEN; x2_32_1 = vld1q_f32(x6); x6 += NEON_LEN; __builtin_prefetch(x6 + GROUP_LEN, 0);
+        x3_32_0 = vld1q_f32(x7); x7 += NEON_LEN; x3_32_1 = vld1q_f32(x7); x7 += NEON_LEN; __builtin_prefetch(x7 + GROUP_LEN, 0);
+        sqD0_32_0 = vld1q_f32(sqD4); sqD4 += NEON_LEN; sqD0_32_1 = vld1q_f32(sqD4); sqD4 += NEON_LEN; __builtin_prefetch(sqD4 + GROUP_LEN, 0);
+        sqD1_32_0 = vld1q_f32(sqD5); sqD5 += NEON_LEN; sqD1_32_1 = vld1q_f32(sqD5); sqD5 += NEON_LEN; __builtin_prefetch(sqD5 + GROUP_LEN, 0);
+        sqD2_32_0 = vld1q_f32(sqD6); sqD6 += NEON_LEN; sqD2_32_1 = vld1q_f32(sqD6); sqD6 += NEON_LEN; __builtin_prefetch(sqD6 + GROUP_LEN, 0);
+        sqD3_32_0 = vld1q_f32(sqD7); sqD7 += NEON_LEN; sqD3_32_1 = vld1q_f32(sqD7); sqD7 += NEON_LEN; __builtin_prefetch(sqD7 + GROUP_LEN, 0);
+        A0_32_0 = vmulq_f32(A0_32_0, sqD0_32_0); A0_32_1 = vmulq_f32(A0_32_1, sqD0_32_1);
+        A1_32_0 = vmulq_f32(A1_32_0, sqD1_32_0); A1_32_1 = vmulq_f32(A1_32_1, sqD1_32_1);
+        A2_32_0 = vmulq_f32(A2_32_0, sqD2_32_0); A2_32_1 = vmulq_f32(A2_32_1, sqD2_32_1);
+        A3_32_0 = vmulq_f32(A3_32_0, sqD3_32_0); A3_32_1 = vmulq_f32(A3_32_1, sqD3_32_1);
+        tmp_0 = vmlsq_f32(tmp_0, A0_32_0 , x0_32_0); tmp_1 = vmlsq_f32(tmp_1, A0_32_1, x0_32_1);
+        tmp_0 = vmlsq_f32(tmp_0, A1_32_0 , x1_32_0); tmp_1 = vmlsq_f32(tmp_1, A1_32_1, x1_32_1);
+        tmp_0 = vmlsq_f32(tmp_0, A2_32_0 , x2_32_0); tmp_1 = vmlsq_f32(tmp_1, A2_32_1, x2_32_1);
+        tmp_0 = vmlsq_f32(tmp_0, A3_32_0 , x3_32_0); tmp_1 = vmlsq_f32(tmp_1, A3_32_1, x3_32_1);
+        vst1q_f32(rhs, tmp_0); rhs += NEON_LEN; vst1q_f32(rhs, tmp_1); rhs += NEON_LEN; __builtin_prefetch(rhs + GROUP_LEN, 1);
+    }
+    for ( ; k < max_nk; k += NEON_LEN) {
+        float16x4x4_t A0_3_16;
+        float32x4_t tmp_0;
+        tmp_0   = vld1q_f32(b9); b9 += NEON_LEN; __builtin_prefetch(b9 + NEON_LEN, 0);
+        myQ_0   = vld1q_f32(sqD9); sqD9 += NEON_LEN; __builtin_prefetch(sqD9 + NEON_LEN, 0);
+        tmp_0 = vdivq_f32(tmp_0, myQ_0);
+        // A0 ~ A3
+        A0_3_16 = vld4_f16(A0_3); A0_3 += NEON_LEN * 4; __builtin_prefetch(A0_3 + NEON_LEN * 16, 0, 0);
+        A0_32_0 = vcvt_f32_f16(A0_3_16.val[0]);
+        A1_32_0 = vcvt_f32_f16(A0_3_16.val[1]);
+        A2_32_0 = vcvt_f32_f16(A0_3_16.val[2]);
+        A3_32_0 = vcvt_f32_f16(A0_3_16.val[3]);
+        x0_32_0 = vld1q_f32(x0); x0 += NEON_LEN; __builtin_prefetch(x0 + NEON_LEN, 0);
+        x1_32_0 = vld1q_f32(x1); x1 += NEON_LEN; __builtin_prefetch(x1 + NEON_LEN, 0);
+        x2_32_0 = vld1q_f32(x2); x2 += NEON_LEN; __builtin_prefetch(x2 + NEON_LEN, 0);
+        x3_32_0 = vld1q_f32(x3); x3 += NEON_LEN; __builtin_prefetch(x3 + NEON_LEN, 0);
+        sqD0_32_0 = vld1q_f32(sqD0); sqD0 += NEON_LEN; __builtin_prefetch(sqD0 + GROUP_LEN, 0);
+        sqD1_32_0 = vld1q_f32(sqD1); sqD1 += NEON_LEN; __builtin_prefetch(sqD1 + GROUP_LEN, 0);
+        sqD2_32_0 = vld1q_f32(sqD2); sqD2 += NEON_LEN; __builtin_prefetch(sqD2 + GROUP_LEN, 0);
+        sqD3_32_0 = vld1q_f32(sqD3); sqD3 += NEON_LEN; __builtin_prefetch(sqD3 + GROUP_LEN, 0);
+        A0_32_0 = vmulq_f32(A0_32_0, sqD0_32_0);
+        A1_32_0 = vmulq_f32(A1_32_0, sqD1_32_0);
+        A2_32_0 = vmulq_f32(A2_32_0, sqD2_32_0);
+        A3_32_0 = vmulq_f32(A3_32_0, sqD3_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A0_32_0 , x0_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A1_32_0 , x1_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A2_32_0 , x2_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A3_32_0 , x3_32_0);
+        // A4 ~ A7
+        A0_3_16 = vld4_f16(A4_7); A4_7 += NEON_LEN * 4; __builtin_prefetch(A4_7 + NEON_LEN * 16, 0, 0);
+        A0_32_0 = vcvt_f32_f16(A0_3_16.val[0]);
+        A1_32_0 = vcvt_f32_f16(A0_3_16.val[1]);
+        A2_32_0 = vcvt_f32_f16(A0_3_16.val[2]);
+        A3_32_0 = vcvt_f32_f16(A0_3_16.val[3]);
+        x0_32_0 = vld1q_f32(x4); x4 += NEON_LEN; __builtin_prefetch(x4 + NEON_LEN, 0);
+        x1_32_0 = vld1q_f32(x5); x5 += NEON_LEN; __builtin_prefetch(x5 + NEON_LEN, 0);
+        x2_32_0 = vld1q_f32(x6); x6 += NEON_LEN; __builtin_prefetch(x6 + NEON_LEN, 0);
+        x3_32_0 = vld1q_f32(x7); x7 += NEON_LEN; __builtin_prefetch(x7 + NEON_LEN, 0);
+        sqD0_32_0 = vld1q_f32(sqD4); sqD4 += NEON_LEN; __builtin_prefetch(sqD4 + GROUP_LEN, 0);
+        sqD1_32_0 = vld1q_f32(sqD5); sqD5 += NEON_LEN; __builtin_prefetch(sqD5 + GROUP_LEN, 0);
+        sqD2_32_0 = vld1q_f32(sqD6); sqD6 += NEON_LEN; __builtin_prefetch(sqD6 + GROUP_LEN, 0);
+        sqD3_32_0 = vld1q_f32(sqD7); sqD7 += NEON_LEN; __builtin_prefetch(sqD7 + GROUP_LEN, 0);
+        A0_32_0 = vmulq_f32(A0_32_0, sqD0_32_0);
+        A1_32_0 = vmulq_f32(A1_32_0, sqD1_32_0);
+        A2_32_0 = vmulq_f32(A2_32_0, sqD2_32_0);
+        A3_32_0 = vmulq_f32(A3_32_0, sqD3_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A0_32_0 , x0_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A1_32_0 , x1_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A2_32_0 , x2_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A3_32_0 , x3_32_0);
+        vst1q_f32(rhs, tmp_0); rhs += NEON_LEN; __builtin_prefetch(rhs + NEON_LEN, 1);
+    }
+    for (k = 0; k < num - max_nk; k++) {
+        float tmp = 
+            + A0_3[0]*x0[k]*sqD0[k] + A0_3[1]*x1[k]*sqD1[k] + A0_3[2]*x2[k]*sqD2[k] + A0_3[3]*x3[k]*sqD3[k]
+            + A4_7[0]*x4[k]*sqD4[k] + A4_7[1]*x5[k]*sqD5[k] + A4_7[2]*x6[k]*sqD6[k] + A4_7[3]*x7[k]*sqD7[k];
+        rhs[k] = b9[k] / sqD9[k] - tmp;
+        A0_3 += 4; A4_7 += 4;
+    }
+}
+
 void inline SOA_line_forward_ALL_3d19_Cal32Stg16(const int num,
     const int vec_k_size, const int vec_ki_size,
-    const __fp16 * Diags[4], const float * b9, const float * x9, float * rhs)
+    const __fp16 * Diags[4], const float * b9, const float * x9, const float * sqD9, float * rhs)
 {// (0,1,2,3) (4,5,6,7) || (11,12,13,14) (15,16,17,18)
     const __fp16* A0_3 = Diags[0], * A4_7 = Diags[1], * A11_14 = Diags[2], * A15_18 = Diags[3];
     const float * x2 = x9 - vec_ki_size, * x6 = x9 - vec_k_size,
@@ -1322,9 +1839,234 @@ void inline SOA_line_forward_ALL_3d19_Cal32Stg16(const int num,
     }
 }
 
+void inline SOA_line_forward_scaled_ALL_3d19_Cal32Stg16(const int num,
+    const int vec_k_size, const int vec_ki_size,
+    const __fp16 * Diags[4], const float * b9, const float * x9, const float * sqD9, float * rhs)
+{// (0,1,2,3) (4,5,6,7) || (11,12,13,14) (15,16,17,18)
+    const __fp16* A0_3 = Diags[0], * A4_7 = Diags[1], * A11_14 = Diags[2], * A15_18 = Diags[3];
+    const float * x2 = x9 - vec_ki_size, * x6 = x9 - vec_k_size,
+                * x16= x9 + vec_ki_size, * x12= x9 + vec_k_size;
+    const float * x0 = x2 - vec_k_size , * x4 = x2 + vec_k_size,
+                * x1 = x2 - 1, * x3 = x2 + 1, * x5 = x6 - 1, * x7 = x6 + 1,
+                * x14= x16- vec_k_size , * x18= x16 + vec_k_size,
+                * x15= x16- 1, * x17= x16+ 1, * x11= x12- 1, * x13= x12+ 1;
+    const float * sqD2 = sqD9 - vec_ki_size, * sqD6 = sqD9 - vec_k_size,
+                * sqD16= sqD9 + vec_ki_size, * sqD12= sqD9 + vec_k_size;
+    const float * sqD0 = sqD2 - vec_k_size , * sqD4 = sqD2 + vec_k_size,
+                * sqD1 = sqD2 - 1, * sqD3 = sqD2 + 1, * sqD5 = sqD6 - 1, * sqD7 = sqD6 + 1,
+                * sqD14= sqD16- vec_k_size , * sqD18= sqD16 + vec_k_size,
+                * sqD15= sqD16- 1, * sqD17= sqD16+ 1, * sqD11= sqD12- 1, * sqD13= sqD12+ 1;
+    float32x4_t A0_32_0, A1_32_0, A2_32_0, A3_32_0;
+    float32x4_t x0_32_0, x1_32_0, x2_32_0, x3_32_0, sqD0_32_0, sqD1_32_0, sqD2_32_0, sqD3_32_0, myQ_0;
+    float32x4_t sqD0_32_1, sqD1_32_1, sqD2_32_1, sqD3_32_1, myQ_1;
+    static_assert(GROUP_LEN == 8 && NEON_LEN == 4);
+    int k = 0, max_gk = num & (~(GROUP_LEN - 1)), max_nk = num & (~(NEON_LEN - 1));
+    for ( ; k < max_gk; k += GROUP_LEN) {
+        float16x8x4_t A0_3_16;
+        float32x4_t tmp_0, tmp_1, x0_32_1, x1_32_1, x2_32_1, x3_32_1, A0_32_1, A1_32_1, A2_32_1, A3_32_1;
+        tmp_0   = vld1q_f32(b9); b9 += NEON_LEN; tmp_1   = vld1q_f32(b9); b9 += NEON_LEN; __builtin_prefetch(b9 + GROUP_LEN, 0);
+        myQ_0   = vld1q_f32(sqD9); sqD9 += NEON_LEN; myQ_1 = vld1q_f32(sqD9); sqD9 += NEON_LEN; __builtin_prefetch(sqD9 + GROUP_LEN, 0);
+        tmp_0 = vdivq_f32(tmp_0, myQ_0); tmp_1 = vdivq_f32(tmp_1, myQ_1);
+        // A0 ~ A3
+        A0_3_16 = vld4q_f16(A0_3); A0_3 += GROUP_LEN * 4; __builtin_prefetch(A0_3 + GROUP_LEN * 16, 0, 0);
+        A0_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[0])); A0_32_1 = vcvt_high_f32_f16(A0_3_16.val[0]);
+        A1_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[1])); A1_32_1 = vcvt_high_f32_f16(A0_3_16.val[1]);
+        A2_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[2])); A2_32_1 = vcvt_high_f32_f16(A0_3_16.val[2]);
+        A3_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[3])); A3_32_1 = vcvt_high_f32_f16(A0_3_16.val[3]);
+        x0_32_0 = vld1q_f32(x0); x0 += NEON_LEN; x0_32_1 = vld1q_f32(x0); x0 += NEON_LEN; __builtin_prefetch(x0 + GROUP_LEN, 0);
+        x1_32_0 = vld1q_f32(x1); x1 += NEON_LEN; x1_32_1 = vld1q_f32(x1); x1 += NEON_LEN; __builtin_prefetch(x1 + GROUP_LEN, 0);
+        x2_32_0 = vld1q_f32(x2); x2 += NEON_LEN; x2_32_1 = vld1q_f32(x2); x2 += NEON_LEN; __builtin_prefetch(x2 + GROUP_LEN, 0);
+        x3_32_0 = vld1q_f32(x3); x3 += NEON_LEN; x3_32_1 = vld1q_f32(x3); x3 += NEON_LEN; __builtin_prefetch(x3 + GROUP_LEN, 0);
+        sqD0_32_0 = vld1q_f32(sqD0); sqD0 += NEON_LEN; sqD0_32_1 = vld1q_f32(sqD0); sqD0 += NEON_LEN; __builtin_prefetch(sqD0 + GROUP_LEN, 0);
+        sqD1_32_0 = vld1q_f32(sqD1); sqD1 += NEON_LEN; sqD1_32_1 = vld1q_f32(sqD1); sqD1 += NEON_LEN; __builtin_prefetch(sqD1 + GROUP_LEN, 0);
+        sqD2_32_0 = vld1q_f32(sqD2); sqD2 += NEON_LEN; sqD2_32_1 = vld1q_f32(sqD2); sqD2 += NEON_LEN; __builtin_prefetch(sqD2 + GROUP_LEN, 0);
+        sqD3_32_0 = vld1q_f32(sqD3); sqD3 += NEON_LEN; sqD3_32_1 = vld1q_f32(sqD3); sqD3 += NEON_LEN; __builtin_prefetch(sqD3 + GROUP_LEN, 0);
+        A0_32_0 = vmulq_f32(A0_32_0, sqD0_32_0); A0_32_1 = vmulq_f32(A0_32_1, sqD0_32_1);
+        A1_32_0 = vmulq_f32(A1_32_0, sqD1_32_0); A1_32_1 = vmulq_f32(A1_32_1, sqD1_32_1);
+        A2_32_0 = vmulq_f32(A2_32_0, sqD2_32_0); A2_32_1 = vmulq_f32(A2_32_1, sqD2_32_1);
+        A3_32_0 = vmulq_f32(A3_32_0, sqD3_32_0); A3_32_1 = vmulq_f32(A3_32_1, sqD3_32_1);
+        tmp_0 = vmlsq_f32(tmp_0, A0_32_0 , x0_32_0); tmp_1 = vmlsq_f32(tmp_1, A0_32_1, x0_32_1);
+        tmp_0 = vmlsq_f32(tmp_0, A1_32_0 , x1_32_0); tmp_1 = vmlsq_f32(tmp_1, A1_32_1, x1_32_1);
+        tmp_0 = vmlsq_f32(tmp_0, A2_32_0 , x2_32_0); tmp_1 = vmlsq_f32(tmp_1, A2_32_1, x2_32_1);
+        tmp_0 = vmlsq_f32(tmp_0, A3_32_0 , x3_32_0); tmp_1 = vmlsq_f32(tmp_1, A3_32_1, x3_32_1);
+        // A4 ~ A7
+        A0_3_16 = vld4q_f16(A4_7); A4_7 += GROUP_LEN * 4; __builtin_prefetch(A4_7 + GROUP_LEN * 16, 0, 0);
+        A0_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[0])); A0_32_1 = vcvt_high_f32_f16(A0_3_16.val[0]);
+        A1_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[1])); A1_32_1 = vcvt_high_f32_f16(A0_3_16.val[1]);
+        A2_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[2])); A2_32_1 = vcvt_high_f32_f16(A0_3_16.val[2]);
+        A3_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[3])); A3_32_1 = vcvt_high_f32_f16(A0_3_16.val[3]);
+        x0_32_0 = vld1q_f32(x4); x4 += NEON_LEN; x0_32_1 = vld1q_f32(x4); x4 += NEON_LEN; __builtin_prefetch(x4 + GROUP_LEN, 0);
+        x1_32_0 = vld1q_f32(x5); x5 += NEON_LEN; x1_32_1 = vld1q_f32(x5); x5 += NEON_LEN; __builtin_prefetch(x5 + GROUP_LEN, 0);
+        x2_32_0 = vld1q_f32(x6); x6 += NEON_LEN; x2_32_1 = vld1q_f32(x6); x6 += NEON_LEN; __builtin_prefetch(x6 + GROUP_LEN, 0);
+        x3_32_0 = vld1q_f32(x7); x7 += NEON_LEN; x3_32_1 = vld1q_f32(x7); x7 += NEON_LEN; __builtin_prefetch(x7 + GROUP_LEN, 0);
+        sqD0_32_0 = vld1q_f32(sqD4); sqD4 += NEON_LEN; sqD0_32_1 = vld1q_f32(sqD4); sqD4 += NEON_LEN; __builtin_prefetch(sqD4 + GROUP_LEN, 0);
+        sqD1_32_0 = vld1q_f32(sqD5); sqD5 += NEON_LEN; sqD1_32_1 = vld1q_f32(sqD5); sqD5 += NEON_LEN; __builtin_prefetch(sqD5 + GROUP_LEN, 0);
+        sqD2_32_0 = vld1q_f32(sqD6); sqD6 += NEON_LEN; sqD2_32_1 = vld1q_f32(sqD6); sqD6 += NEON_LEN; __builtin_prefetch(sqD6 + GROUP_LEN, 0);
+        sqD3_32_0 = vld1q_f32(sqD7); sqD7 += NEON_LEN; sqD3_32_1 = vld1q_f32(sqD7); sqD7 += NEON_LEN; __builtin_prefetch(sqD7 + GROUP_LEN, 0);
+        A0_32_0 = vmulq_f32(A0_32_0, sqD0_32_0); A0_32_1 = vmulq_f32(A0_32_1, sqD0_32_1);
+        A1_32_0 = vmulq_f32(A1_32_0, sqD1_32_0); A1_32_1 = vmulq_f32(A1_32_1, sqD1_32_1);
+        A2_32_0 = vmulq_f32(A2_32_0, sqD2_32_0); A2_32_1 = vmulq_f32(A2_32_1, sqD2_32_1);
+        A3_32_0 = vmulq_f32(A3_32_0, sqD3_32_0); A3_32_1 = vmulq_f32(A3_32_1, sqD3_32_1);
+        tmp_0 = vmlsq_f32(tmp_0, A0_32_0 , x0_32_0); tmp_1 = vmlsq_f32(tmp_1, A0_32_1, x0_32_1);
+        tmp_0 = vmlsq_f32(tmp_0, A1_32_0 , x1_32_0); tmp_1 = vmlsq_f32(tmp_1, A1_32_1, x1_32_1);
+        tmp_0 = vmlsq_f32(tmp_0, A2_32_0 , x2_32_0); tmp_1 = vmlsq_f32(tmp_1, A2_32_1, x2_32_1);
+        tmp_0 = vmlsq_f32(tmp_0, A3_32_0 , x3_32_0); tmp_1 = vmlsq_f32(tmp_1, A3_32_1, x3_32_1);
+        // A11 ~ A14
+        A0_3_16 = vld4q_f16(A11_14); A11_14 += GROUP_LEN * 4; __builtin_prefetch(A11_14 + GROUP_LEN * 16, 0, 0);
+        A0_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[0])); A0_32_1 = vcvt_high_f32_f16(A0_3_16.val[0]);
+        A1_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[1])); A1_32_1 = vcvt_high_f32_f16(A0_3_16.val[1]);
+        A2_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[2])); A2_32_1 = vcvt_high_f32_f16(A0_3_16.val[2]);
+        A3_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[3])); A3_32_1 = vcvt_high_f32_f16(A0_3_16.val[3]);
+        x0_32_0 = vld1q_f32(x11); x11 += NEON_LEN; x0_32_1 = vld1q_f32(x11); x11 += NEON_LEN; __builtin_prefetch(x11 + GROUP_LEN, 0);
+        x1_32_0 = vld1q_f32(x12); x12 += NEON_LEN; x1_32_1 = vld1q_f32(x12); x12 += NEON_LEN; __builtin_prefetch(x12 + GROUP_LEN, 0);
+        x2_32_0 = vld1q_f32(x13); x13 += NEON_LEN; x2_32_1 = vld1q_f32(x13); x13 += NEON_LEN; __builtin_prefetch(x13 + GROUP_LEN, 0);
+        x3_32_0 = vld1q_f32(x14); x14 += NEON_LEN; x3_32_1 = vld1q_f32(x14); x14 += NEON_LEN; __builtin_prefetch(x14 + GROUP_LEN, 0);
+        sqD0_32_0 = vld1q_f32(sqD11); sqD11 += NEON_LEN; sqD0_32_1 = vld1q_f32(sqD11); sqD11 += NEON_LEN; __builtin_prefetch(sqD11 + GROUP_LEN, 0);
+        sqD1_32_0 = vld1q_f32(sqD12); sqD12 += NEON_LEN; sqD1_32_1 = vld1q_f32(sqD12); sqD12 += NEON_LEN; __builtin_prefetch(sqD12 + GROUP_LEN, 0);
+        sqD2_32_0 = vld1q_f32(sqD13); sqD13 += NEON_LEN; sqD2_32_1 = vld1q_f32(sqD13); sqD13 += NEON_LEN; __builtin_prefetch(sqD13 + GROUP_LEN, 0);
+        sqD3_32_0 = vld1q_f32(sqD14); sqD14 += NEON_LEN; sqD3_32_1 = vld1q_f32(sqD14); sqD14 += NEON_LEN; __builtin_prefetch(sqD14 + GROUP_LEN, 0);
+        A0_32_0 = vmulq_f32(A0_32_0, sqD0_32_0); A0_32_1 = vmulq_f32(A0_32_1, sqD0_32_1);
+        A1_32_0 = vmulq_f32(A1_32_0, sqD1_32_0); A1_32_1 = vmulq_f32(A1_32_1, sqD1_32_1);
+        A2_32_0 = vmulq_f32(A2_32_0, sqD2_32_0); A2_32_1 = vmulq_f32(A2_32_1, sqD2_32_1);
+        A3_32_0 = vmulq_f32(A3_32_0, sqD3_32_0); A3_32_1 = vmulq_f32(A3_32_1, sqD3_32_1);
+        tmp_0 = vmlsq_f32(tmp_0, A0_32_0 , x0_32_0); tmp_1 = vmlsq_f32(tmp_1, A0_32_1, x0_32_1);
+        tmp_0 = vmlsq_f32(tmp_0, A1_32_0 , x1_32_0); tmp_1 = vmlsq_f32(tmp_1, A1_32_1, x1_32_1);
+        tmp_0 = vmlsq_f32(tmp_0, A2_32_0 , x2_32_0); tmp_1 = vmlsq_f32(tmp_1, A2_32_1, x2_32_1);
+        tmp_0 = vmlsq_f32(tmp_0, A3_32_0 , x3_32_0); tmp_1 = vmlsq_f32(tmp_1, A3_32_1, x3_32_1);
+        // A15~A18
+        A0_3_16 = vld4q_f16(A15_18); A15_18 += GROUP_LEN * 4; __builtin_prefetch(A15_18 + GROUP_LEN * 16, 0, 0);
+        A0_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[0])); A0_32_1 = vcvt_high_f32_f16(A0_3_16.val[0]);
+        A1_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[1])); A1_32_1 = vcvt_high_f32_f16(A0_3_16.val[1]);
+        A2_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[2])); A2_32_1 = vcvt_high_f32_f16(A0_3_16.val[2]);
+        A3_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[3])); A3_32_1 = vcvt_high_f32_f16(A0_3_16.val[3]);
+        x0_32_0 = vld1q_f32(x15); x15 += NEON_LEN; x0_32_1 = vld1q_f32(x15); x15 += NEON_LEN; __builtin_prefetch(x15 + GROUP_LEN, 0);
+        x1_32_0 = vld1q_f32(x16); x16 += NEON_LEN; x1_32_1 = vld1q_f32(x16); x16 += NEON_LEN; __builtin_prefetch(x16 + GROUP_LEN, 0);
+        x2_32_0 = vld1q_f32(x17); x17 += NEON_LEN; x2_32_1 = vld1q_f32(x17); x17 += NEON_LEN; __builtin_prefetch(x17 + GROUP_LEN, 0);
+        x3_32_0 = vld1q_f32(x18); x18 += NEON_LEN; x3_32_1 = vld1q_f32(x18); x18 += NEON_LEN; __builtin_prefetch(x18 + GROUP_LEN, 0);
+        sqD0_32_0 = vld1q_f32(sqD15); sqD15 += NEON_LEN; sqD0_32_1 = vld1q_f32(sqD15); sqD15 += NEON_LEN; __builtin_prefetch(sqD15 + GROUP_LEN, 0);
+        sqD1_32_0 = vld1q_f32(sqD16); sqD16 += NEON_LEN; sqD1_32_1 = vld1q_f32(sqD16); sqD16 += NEON_LEN; __builtin_prefetch(sqD16 + GROUP_LEN, 0);
+        sqD2_32_0 = vld1q_f32(sqD17); sqD17 += NEON_LEN; sqD2_32_1 = vld1q_f32(sqD17); sqD17 += NEON_LEN; __builtin_prefetch(sqD17 + GROUP_LEN, 0);
+        sqD3_32_0 = vld1q_f32(sqD18); sqD18 += NEON_LEN; sqD3_32_1 = vld1q_f32(sqD18); sqD18 += NEON_LEN; __builtin_prefetch(sqD18 + GROUP_LEN, 0);
+        A0_32_0 = vmulq_f32(A0_32_0, sqD0_32_0); A0_32_1 = vmulq_f32(A0_32_1, sqD0_32_1);
+        A1_32_0 = vmulq_f32(A1_32_0, sqD1_32_0); A1_32_1 = vmulq_f32(A1_32_1, sqD1_32_1);
+        A2_32_0 = vmulq_f32(A2_32_0, sqD2_32_0); A2_32_1 = vmulq_f32(A2_32_1, sqD2_32_1);
+        A3_32_0 = vmulq_f32(A3_32_0, sqD3_32_0); A3_32_1 = vmulq_f32(A3_32_1, sqD3_32_1);
+        tmp_0 = vmlsq_f32(tmp_0, A0_32_0 , x0_32_0); tmp_1 = vmlsq_f32(tmp_1, A0_32_1, x0_32_1);
+        tmp_0 = vmlsq_f32(tmp_0, A1_32_0 , x1_32_0); tmp_1 = vmlsq_f32(tmp_1, A1_32_1, x1_32_1);
+        tmp_0 = vmlsq_f32(tmp_0, A2_32_0 , x2_32_0); tmp_1 = vmlsq_f32(tmp_1, A2_32_1, x2_32_1);
+        tmp_0 = vmlsq_f32(tmp_0, A3_32_0 , x3_32_0); tmp_1 = vmlsq_f32(tmp_1, A3_32_1, x3_32_1);
+        vst1q_f32(rhs, tmp_0); rhs += NEON_LEN; vst1q_f32(rhs, tmp_1); rhs += NEON_LEN; __builtin_prefetch(rhs + GROUP_LEN, 1);
+    }
+    for ( ; k < max_nk; k += NEON_LEN) {
+        float16x4x4_t A0_3_16;
+        float32x4_t tmp_0;
+        tmp_0   = vld1q_f32(b9); b9 += NEON_LEN; __builtin_prefetch(b9 + NEON_LEN, 0);
+        myQ_0   = vld1q_f32(sqD9); sqD9 += NEON_LEN; __builtin_prefetch(sqD9 + NEON_LEN, 0);
+        tmp_0 = vdivq_f32(tmp_0, myQ_0);
+        // A0 ~ A3
+        A0_3_16 = vld4_f16(A0_3); A0_3 += NEON_LEN * 4; __builtin_prefetch(A0_3 + NEON_LEN * 16, 0, 0);
+        A0_32_0 = vcvt_f32_f16(A0_3_16.val[0]);
+        A1_32_0 = vcvt_f32_f16(A0_3_16.val[1]);
+        A2_32_0 = vcvt_f32_f16(A0_3_16.val[2]);
+        A3_32_0 = vcvt_f32_f16(A0_3_16.val[3]);
+        x0_32_0 = vld1q_f32(x0); x0 += NEON_LEN; __builtin_prefetch(x0 + NEON_LEN, 0);
+        x1_32_0 = vld1q_f32(x1); x1 += NEON_LEN; __builtin_prefetch(x1 + NEON_LEN, 0);
+        x2_32_0 = vld1q_f32(x2); x2 += NEON_LEN; __builtin_prefetch(x2 + NEON_LEN, 0);
+        x3_32_0 = vld1q_f32(x3); x3 += NEON_LEN; __builtin_prefetch(x3 + NEON_LEN, 0);
+        sqD0_32_0 = vld1q_f32(sqD0); sqD0 += NEON_LEN; __builtin_prefetch(sqD0 + GROUP_LEN, 0);
+        sqD1_32_0 = vld1q_f32(sqD1); sqD1 += NEON_LEN; __builtin_prefetch(sqD1 + GROUP_LEN, 0);
+        sqD2_32_0 = vld1q_f32(sqD2); sqD2 += NEON_LEN; __builtin_prefetch(sqD2 + GROUP_LEN, 0);
+        sqD3_32_0 = vld1q_f32(sqD3); sqD3 += NEON_LEN; __builtin_prefetch(sqD3 + GROUP_LEN, 0);
+        A0_32_0 = vmulq_f32(A0_32_0, sqD0_32_0);
+        A1_32_0 = vmulq_f32(A1_32_0, sqD1_32_0);
+        A2_32_0 = vmulq_f32(A2_32_0, sqD2_32_0);
+        A3_32_0 = vmulq_f32(A3_32_0, sqD3_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A0_32_0 , x0_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A1_32_0 , x1_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A2_32_0 , x2_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A3_32_0 , x3_32_0);
+        // A4 ~ A7
+        A0_3_16 = vld4_f16(A4_7); A4_7 += NEON_LEN * 4; __builtin_prefetch(A4_7 + NEON_LEN * 16, 0, 0);
+        A0_32_0 = vcvt_f32_f16(A0_3_16.val[0]);
+        A1_32_0 = vcvt_f32_f16(A0_3_16.val[1]);
+        A2_32_0 = vcvt_f32_f16(A0_3_16.val[2]);
+        A3_32_0 = vcvt_f32_f16(A0_3_16.val[3]);
+        x0_32_0 = vld1q_f32(x4); x4 += NEON_LEN; __builtin_prefetch(x4 + NEON_LEN, 0);
+        x1_32_0 = vld1q_f32(x5); x5 += NEON_LEN; __builtin_prefetch(x5 + NEON_LEN, 0);
+        x2_32_0 = vld1q_f32(x6); x6 += NEON_LEN; __builtin_prefetch(x6 + NEON_LEN, 0);
+        x3_32_0 = vld1q_f32(x7); x7 += NEON_LEN; __builtin_prefetch(x7 + NEON_LEN, 0);
+        sqD0_32_0 = vld1q_f32(sqD4); sqD4 += NEON_LEN; __builtin_prefetch(sqD4 + GROUP_LEN, 0);
+        sqD1_32_0 = vld1q_f32(sqD5); sqD5 += NEON_LEN; __builtin_prefetch(sqD5 + GROUP_LEN, 0);
+        sqD2_32_0 = vld1q_f32(sqD6); sqD6 += NEON_LEN; __builtin_prefetch(sqD6 + GROUP_LEN, 0);
+        sqD3_32_0 = vld1q_f32(sqD7); sqD7 += NEON_LEN; __builtin_prefetch(sqD7 + GROUP_LEN, 0);
+        A0_32_0 = vmulq_f32(A0_32_0, sqD0_32_0);
+        A1_32_0 = vmulq_f32(A1_32_0, sqD1_32_0);
+        A2_32_0 = vmulq_f32(A2_32_0, sqD2_32_0);
+        A3_32_0 = vmulq_f32(A3_32_0, sqD3_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A0_32_0 , x0_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A1_32_0 , x1_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A2_32_0 , x2_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A3_32_0 , x3_32_0);
+        // A11 ~ A14
+        A0_3_16 = vld4_f16(A11_14); A11_14 += NEON_LEN * 4; __builtin_prefetch(A11_14 + NEON_LEN * 16, 0, 0);
+        A0_32_0 = vcvt_f32_f16(A0_3_16.val[0]);
+        A1_32_0 = vcvt_f32_f16(A0_3_16.val[1]);
+        A2_32_0 = vcvt_f32_f16(A0_3_16.val[2]);
+        A3_32_0 = vcvt_f32_f16(A0_3_16.val[3]);
+        x0_32_0 = vld1q_f32(x11); x11 += NEON_LEN; __builtin_prefetch(x11 + NEON_LEN, 0);
+        x1_32_0 = vld1q_f32(x12); x12 += NEON_LEN; __builtin_prefetch(x12 + NEON_LEN, 0);
+        x2_32_0 = vld1q_f32(x13); x13 += NEON_LEN; __builtin_prefetch(x13 + NEON_LEN, 0);
+        x3_32_0 = vld1q_f32(x14); x14 += NEON_LEN; __builtin_prefetch(x14 + NEON_LEN, 0);
+        sqD0_32_0 = vld1q_f32(sqD11); sqD11 += NEON_LEN; __builtin_prefetch(sqD11 + NEON_LEN, 0);
+        sqD1_32_0 = vld1q_f32(sqD12); sqD12 += NEON_LEN; __builtin_prefetch(sqD12 + NEON_LEN, 0);
+        sqD2_32_0 = vld1q_f32(sqD13); sqD13 += NEON_LEN; __builtin_prefetch(sqD13 + NEON_LEN, 0);
+        sqD3_32_0 = vld1q_f32(sqD14); sqD14 += NEON_LEN; __builtin_prefetch(sqD14 + NEON_LEN, 0);
+        A0_32_0 = vmulq_f32(A0_32_0, sqD0_32_0);
+        A1_32_0 = vmulq_f32(A1_32_0, sqD1_32_0);
+        A2_32_0 = vmulq_f32(A2_32_0, sqD2_32_0);
+        A3_32_0 = vmulq_f32(A3_32_0, sqD3_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A0_32_0 , x0_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A1_32_0 , x1_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A2_32_0 , x2_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A3_32_0 , x3_32_0);
+        // A15 ~ A18
+        A0_3_16 = vld4_f16(A15_18); A15_18 += NEON_LEN * 4; __builtin_prefetch(A15_18 + NEON_LEN * 16, 0, 0);
+        A0_32_0 = vcvt_f32_f16(A0_3_16.val[0]);
+        A1_32_0 = vcvt_f32_f16(A0_3_16.val[1]);
+        A2_32_0 = vcvt_f32_f16(A0_3_16.val[2]);
+        A3_32_0 = vcvt_f32_f16(A0_3_16.val[3]);
+        x0_32_0 = vld1q_f32(x15); x15 += NEON_LEN; __builtin_prefetch(x15 + NEON_LEN, 0);
+        x1_32_0 = vld1q_f32(x16); x16 += NEON_LEN; __builtin_prefetch(x16 + NEON_LEN, 0);
+        x2_32_0 = vld1q_f32(x17); x17 += NEON_LEN; __builtin_prefetch(x17 + NEON_LEN, 0);
+        x3_32_0 = vld1q_f32(x18); x18 += NEON_LEN; __builtin_prefetch(x18 + NEON_LEN, 0);
+        sqD0_32_0 = vld1q_f32(sqD15); sqD15 += NEON_LEN; __builtin_prefetch(sqD15 + NEON_LEN, 0);
+        sqD1_32_0 = vld1q_f32(sqD16); sqD16 += NEON_LEN; __builtin_prefetch(sqD16 + NEON_LEN, 0);
+        sqD2_32_0 = vld1q_f32(sqD17); sqD17 += NEON_LEN; __builtin_prefetch(sqD17 + NEON_LEN, 0);
+        sqD3_32_0 = vld1q_f32(sqD18); sqD18 += NEON_LEN; __builtin_prefetch(sqD18 + NEON_LEN, 0);
+        A0_32_0 = vmulq_f32(A0_32_0, sqD0_32_0);
+        A1_32_0 = vmulq_f32(A1_32_0, sqD1_32_0);
+        A2_32_0 = vmulq_f32(A2_32_0, sqD2_32_0);
+        A3_32_0 = vmulq_f32(A3_32_0, sqD3_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A0_32_0 , x0_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A1_32_0 , x1_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A2_32_0 , x2_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A3_32_0 , x3_32_0);
+        vst1q_f32(rhs, tmp_0); rhs += NEON_LEN; __builtin_prefetch(rhs + NEON_LEN, 1);
+    }
+    for (k = 0; k < num - max_nk; k++) {
+        float tmp = 
+        + A0_3[0]*x0[k]*sqD0[k] + A0_3[1]*x1[k]*sqD1[k] + A0_3[2]*x2[k]*sqD2[k] + A0_3[3]*x3[k]*sqD3[k]
+        + A4_7[0]*x4[k]*sqD4[k] + A4_7[1]*x5[k]*sqD5[k] + A4_7[2]*x6[k]*sqD6[k] + A4_7[3]*x7[k]*sqD7[k]
+        + A11_14[0]*x11[k]*sqD11[k] + A11_14[1]*x12[k]*sqD12[k] + A11_14[2]*x13[k]*sqD13[k] + A11_14[3]*x14[k]*sqD14[k]
+        + A15_18[0]*x15[k]*sqD15[k] + A15_18[1]*x16[k]*sqD16[k] + A15_18[2]*x17[k]*sqD17[k] + A15_18[3]*x18[k]*sqD18[k];
+        rhs[k] = b9[k] / sqD9[k] - tmp;
+        A0_3 += 4; A4_7 += 4; A11_14 += 4; A15_18 += 4;
+    }
+}
+
 void inline SOA_line_backward_ALL_3d19_Cal32Stg16(const int num,
     const int vec_k_size, const int vec_ki_size,
-    const __fp16 * Diags[4], const float * b9, const float * x9, float * rhs)
+    const __fp16 * Diags[4], const float * b9, const float * x9, const float * sqD9, float * rhs)
 {// (0,1,2,3) (4,5,6,7) || (11,12,13,14) (15,16,17,18)
     const __fp16* A0_3 = Diags[0], * A4_7 = Diags[1], * A11_14 = Diags[2], * A15_18 = Diags[3];
     const float * x2 = x9 - vec_ki_size, * x6 = x9 - vec_k_size,
@@ -1474,7 +2216,7 @@ void inline SOA_line_backward_ALL_3d19_Cal32Stg16(const int num,
     x0 -= min_nk; x1 -= min_nk; x2 -= min_nk; x3 -= min_nk;
     x4 -= min_nk; x5 -= min_nk; x6 -= min_nk; x7 -= min_nk;
     x11-= min_nk; x12-= min_nk; x13-= min_nk; x14-= min_nk;
-    x15-= min_nk; x16-= min_nk; x17-= min_gk; x18-= min_nk; b9 -= min_nk;
+    x15-= min_nk; x16-= min_nk; x17-= min_gk; x18-= min_nk; b9 -= min_nk; rhs -= min_nk;
     for (k = min_nk - 1; k >= 0; k--) {
         float tmp = 
         + A0_3[0]*x0[k] + A0_3[1]*x1[k] + A0_3[2]*x2[k] + A0_3[3]*x3[k]
@@ -1483,6 +2225,250 @@ void inline SOA_line_backward_ALL_3d19_Cal32Stg16(const int num,
         + A11_14[0]*x11[k] + A11_14[1]*x12[k] + A11_14[2]*x13[k] + A11_14[3]*x14[k]
         + A15_18[0]*x15[k] + A15_18[1]*x16[k] + A15_18[2]*x17[k] + A15_18[3]*x18[k];
         rhs[k] = b9[k] - tmp;// b - L*x_{k+1}
+        A0_3 -= 4; A4_7 -= 4; A11_14 -= 4; A15_18 -= 4;
+    }
+}
+
+void inline SOA_line_backward_scaled_ALL_3d19_Cal32Stg16(const int num,
+    const int vec_k_size, const int vec_ki_size,
+    const __fp16 * Diags[4], const float * b9, const float * x9, const float * sqD9, float * rhs)
+{// (0,1,2,3) (4,5,6,7) || (11,12,13,14) (15,16,17,18)
+    const __fp16* A0_3 = Diags[0], * A4_7 = Diags[1], * A11_14 = Diags[2], * A15_18 = Diags[3];
+    const float * x2 = x9 - vec_ki_size, * x6 = x9 - vec_k_size,
+                * x16= x9 + vec_ki_size, * x12= x9 + vec_k_size;
+    const float * x0 = x2 - vec_k_size, * x4 = x2 + vec_k_size,
+                * x14= x16- vec_k_size, * x18= x16+ vec_k_size,
+                * x1 = x2 - 1, * x3 = x2 + 1, * x5 = x6 - 1, * x7 = x6 + 1,
+                * x11= x12- 1, * x13= x12+ 1, * x15= x16- 1, * x17= x16+ 1;
+    const float * sqD2 = sqD9 - vec_ki_size, * sqD6 = sqD9 - vec_k_size,
+                * sqD16= sqD9 + vec_ki_size, * sqD12= sqD9 + vec_k_size;
+    const float * sqD0 = sqD2 - vec_k_size, * sqD4 = sqD2 + vec_k_size,
+                * sqD14= sqD16- vec_k_size, * sqD18= sqD16+ vec_k_size,
+                * sqD1 = sqD2 - 1, * sqD3 = sqD2 + 1, * sqD5 = sqD6 - 1, * sqD7 = sqD6 + 1,
+                * sqD11= sqD12- 1, * sqD13= sqD12+ 1, * sqD15= sqD16- 1, * sqD17= sqD16+ 1;
+    float32x4_t A0_32_0, A1_32_0, A2_32_0, A3_32_0;
+    float32x4_t x0_32_0, x1_32_0, x2_32_0, x3_32_0, sqD0_32_0, sqD1_32_0, sqD2_32_0, sqD3_32_0, myQ_0;
+    static_assert(GROUP_LEN == 8 && NEON_LEN == 4);
+    int k = num, min_gk = num & (GROUP_LEN - 1), min_nk = num & (NEON_LEN-1);
+    for ( ; k > min_gk; k -= GROUP_LEN) {
+        float16x8x4_t A0_3_16;
+        float32x4_t tmp_0, tmp_1, x0_32_1, x1_32_1, x2_32_1, x3_32_1, sqD0_32_1, sqD1_32_1, sqD2_32_1, sqD3_32_1, myQ_1;
+        float32x4_t A0_32_1, A1_32_1, A2_32_1, A3_32_1;
+        b9 -= NEON_LEN; tmp_1 = vld1q_f32(b9); b9 -= NEON_LEN; tmp_0 = vld1q_f32(b9); __builtin_prefetch(b9 - GROUP_LEN, 0);
+        sqD9 -= NEON_LEN; myQ_1 = vld1q_f32(sqD9); sqD9 -= NEON_LEN; myQ_0 = vld1q_f32(sqD9); __builtin_prefetch(sqD9 - GROUP_LEN, 0);
+        tmp_1 = vdivq_f32(tmp_1, myQ_1); tmp_0 = vdivq_f32(tmp_0, myQ_0);
+        // A0~A3
+        A0_3 -= GROUP_LEN * 4;
+        A0_3_16 = vld4q_f16(A0_3); __builtin_prefetch(A0_3 - GROUP_LEN * 16, 0, 0);
+        A0_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[0])); A0_32_1 = vcvt_high_f32_f16(A0_3_16.val[0]);
+        A1_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[1])); A1_32_1 = vcvt_high_f32_f16(A0_3_16.val[1]);
+        A2_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[2])); A2_32_1 = vcvt_high_f32_f16(A0_3_16.val[2]);
+        A3_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[3])); A3_32_1 = vcvt_high_f32_f16(A0_3_16.val[3]);
+        x0 -= NEON_LEN; x0_32_1 = vld1q_f32(x0); x0 -= NEON_LEN; x0_32_0 = vld1q_f32(x0); __builtin_prefetch(x0 - GROUP_LEN, 0);
+        x1 -= NEON_LEN; x1_32_1 = vld1q_f32(x1); x1 -= NEON_LEN; x1_32_0 = vld1q_f32(x1); __builtin_prefetch(x1 - GROUP_LEN, 0);
+        x2 -= NEON_LEN; x2_32_1 = vld1q_f32(x2); x2 -= NEON_LEN; x2_32_0 = vld1q_f32(x2); __builtin_prefetch(x2 - GROUP_LEN, 0);
+        x3 -= NEON_LEN; x3_32_1 = vld1q_f32(x3); x3 -= NEON_LEN; x3_32_0 = vld1q_f32(x3); __builtin_prefetch(x3 - GROUP_LEN, 0);
+        sqD0 -= NEON_LEN; sqD0_32_1 = vld1q_f32(sqD0); sqD0 -= NEON_LEN; sqD0_32_0 = vld1q_f32(sqD0); __builtin_prefetch(sqD0 - GROUP_LEN, 0);
+        sqD1 -= NEON_LEN; sqD1_32_1 = vld1q_f32(sqD1); sqD1 -= NEON_LEN; sqD1_32_0 = vld1q_f32(sqD1); __builtin_prefetch(sqD1 - GROUP_LEN, 0);
+        sqD2 -= NEON_LEN; sqD2_32_1 = vld1q_f32(sqD2); sqD2 -= NEON_LEN; sqD2_32_0 = vld1q_f32(sqD2); __builtin_prefetch(sqD2 - GROUP_LEN, 0);
+        sqD3 -= NEON_LEN; sqD3_32_1 = vld1q_f32(sqD3); sqD3 -= NEON_LEN; sqD3_32_0 = vld1q_f32(sqD3); __builtin_prefetch(sqD3 - GROUP_LEN, 0);
+        A0_32_1 = vmulq_f32(A0_32_1, sqD0_32_1); A0_32_0 = vmulq_f32(A0_32_0, sqD0_32_0);
+        A1_32_1 = vmulq_f32(A1_32_1, sqD1_32_1); A1_32_0 = vmulq_f32(A1_32_0, sqD1_32_0);
+        A2_32_1 = vmulq_f32(A2_32_1, sqD2_32_1); A2_32_0 = vmulq_f32(A2_32_0, sqD2_32_0);
+        A3_32_1 = vmulq_f32(A3_32_1, sqD3_32_1); A3_32_0 = vmulq_f32(A3_32_0, sqD3_32_0);
+        tmp_1 = vmlsq_f32(tmp_1, A0_32_1, x0_32_1); tmp_0 = vmlsq_f32(tmp_0, A0_32_0 , x0_32_0); 
+        tmp_1 = vmlsq_f32(tmp_1, A1_32_1, x1_32_1); tmp_0 = vmlsq_f32(tmp_0, A1_32_0 , x1_32_0); 
+        tmp_1 = vmlsq_f32(tmp_1, A2_32_1, x2_32_1); tmp_0 = vmlsq_f32(tmp_0, A2_32_0 , x2_32_0); 
+        tmp_1 = vmlsq_f32(tmp_1, A3_32_1, x3_32_1); tmp_0 = vmlsq_f32(tmp_0, A3_32_0 , x3_32_0); 
+        // A4~A7
+        A4_7 -= GROUP_LEN * 4;
+        A0_3_16 = vld4q_f16(A4_7); __builtin_prefetch(A4_7 - GROUP_LEN * 16, 0, 0);
+        A0_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[0])); A0_32_1 = vcvt_high_f32_f16(A0_3_16.val[0]);
+        A1_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[1])); A1_32_1 = vcvt_high_f32_f16(A0_3_16.val[1]);
+        A2_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[2])); A2_32_1 = vcvt_high_f32_f16(A0_3_16.val[2]);
+        A3_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[3])); A3_32_1 = vcvt_high_f32_f16(A0_3_16.val[3]);
+        x4 -= NEON_LEN; x0_32_1 = vld1q_f32(x4); x4 -= NEON_LEN; x0_32_0 = vld1q_f32(x4); __builtin_prefetch(x4 - GROUP_LEN, 0);
+        x5 -= NEON_LEN; x1_32_1 = vld1q_f32(x5); x5 -= NEON_LEN; x1_32_0 = vld1q_f32(x5); __builtin_prefetch(x5 - GROUP_LEN, 0);
+        x6 -= NEON_LEN; x2_32_1 = vld1q_f32(x6); x6 -= NEON_LEN; x2_32_0 = vld1q_f32(x6); __builtin_prefetch(x6 - GROUP_LEN, 0);
+        x7 -= NEON_LEN; x3_32_1 = vld1q_f32(x7); x7 -= NEON_LEN; x3_32_0 = vld1q_f32(x7); __builtin_prefetch(x7 - GROUP_LEN, 0);
+        sqD4 -= NEON_LEN; sqD0_32_1 = vld1q_f32(sqD4); sqD4 -= NEON_LEN; sqD0_32_0 = vld1q_f32(sqD4); __builtin_prefetch(sqD4 - GROUP_LEN, 0);
+        sqD5 -= NEON_LEN; sqD1_32_1 = vld1q_f32(sqD5); sqD5 -= NEON_LEN; sqD1_32_0 = vld1q_f32(sqD5); __builtin_prefetch(sqD5 - GROUP_LEN, 0);
+        sqD6 -= NEON_LEN; sqD2_32_1 = vld1q_f32(sqD6); sqD6 -= NEON_LEN; sqD2_32_0 = vld1q_f32(sqD6); __builtin_prefetch(sqD6 - GROUP_LEN, 0);
+        sqD7 -= NEON_LEN; sqD3_32_1 = vld1q_f32(sqD7); sqD7 -= NEON_LEN; sqD3_32_0 = vld1q_f32(sqD7); __builtin_prefetch(sqD7 - GROUP_LEN, 0);
+        A0_32_1 = vmulq_f32(A0_32_1, sqD0_32_1); A0_32_0 = vmulq_f32(A0_32_0, sqD0_32_0);
+        A1_32_1 = vmulq_f32(A1_32_1, sqD1_32_1); A1_32_0 = vmulq_f32(A1_32_0, sqD1_32_0);
+        A2_32_1 = vmulq_f32(A2_32_1, sqD2_32_1); A2_32_0 = vmulq_f32(A2_32_0, sqD2_32_0);
+        A3_32_1 = vmulq_f32(A3_32_1, sqD3_32_1); A3_32_0 = vmulq_f32(A3_32_0, sqD3_32_0);
+        tmp_1 = vmlsq_f32(tmp_1, A0_32_1, x0_32_1); tmp_0 = vmlsq_f32(tmp_0, A0_32_0 , x0_32_0); 
+        tmp_1 = vmlsq_f32(tmp_1, A1_32_1, x1_32_1); tmp_0 = vmlsq_f32(tmp_0, A1_32_0 , x1_32_0); 
+        tmp_1 = vmlsq_f32(tmp_1, A2_32_1, x2_32_1); tmp_0 = vmlsq_f32(tmp_0, A2_32_0 , x2_32_0); 
+        tmp_1 = vmlsq_f32(tmp_1, A3_32_1, x3_32_1); tmp_0 = vmlsq_f32(tmp_0, A3_32_0 , x3_32_0);
+        // A11~A14
+        A11_14 -= GROUP_LEN * 4;
+        A0_3_16 = vld4q_f16(A11_14); __builtin_prefetch(A11_14 - GROUP_LEN * 16, 0, 0);
+        A0_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[0])); A0_32_1 = vcvt_high_f32_f16(A0_3_16.val[0]);
+        A1_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[1])); A1_32_1 = vcvt_high_f32_f16(A0_3_16.val[1]);
+        A2_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[2])); A2_32_1 = vcvt_high_f32_f16(A0_3_16.val[2]);
+        A3_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[3])); A3_32_1 = vcvt_high_f32_f16(A0_3_16.val[3]);
+        x11 -= NEON_LEN; x0_32_1 = vld1q_f32(x11); x11 -= NEON_LEN; x0_32_0 = vld1q_f32(x11); __builtin_prefetch(x11 - GROUP_LEN, 0);
+        x12 -= NEON_LEN; x1_32_1 = vld1q_f32(x12); x12 -= NEON_LEN; x1_32_0 = vld1q_f32(x12); __builtin_prefetch(x12 - GROUP_LEN, 0);
+        x13 -= NEON_LEN; x2_32_1 = vld1q_f32(x13); x13 -= NEON_LEN; x2_32_0 = vld1q_f32(x13); __builtin_prefetch(x13 - GROUP_LEN, 0);
+        x14 -= NEON_LEN; x3_32_1 = vld1q_f32(x14); x14 -= NEON_LEN; x3_32_0 = vld1q_f32(x14); __builtin_prefetch(x14 - GROUP_LEN, 0);
+        sqD11 -= NEON_LEN; sqD0_32_1 = vld1q_f32(sqD11); sqD11 -= NEON_LEN; sqD0_32_0 = vld1q_f32(sqD11); __builtin_prefetch(sqD11 - GROUP_LEN, 0);
+        sqD12 -= NEON_LEN; sqD1_32_1 = vld1q_f32(sqD12); sqD12 -= NEON_LEN; sqD1_32_0 = vld1q_f32(sqD12); __builtin_prefetch(sqD12 - GROUP_LEN, 0);
+        sqD13 -= NEON_LEN; sqD2_32_1 = vld1q_f32(sqD13); sqD13 -= NEON_LEN; sqD2_32_0 = vld1q_f32(sqD13); __builtin_prefetch(sqD13 - GROUP_LEN, 0);
+        sqD14 -= NEON_LEN; sqD3_32_1 = vld1q_f32(sqD14); sqD14 -= NEON_LEN; sqD3_32_0 = vld1q_f32(sqD14); __builtin_prefetch(sqD14 - GROUP_LEN, 0);
+        A0_32_1 = vmulq_f32(A0_32_1, sqD0_32_1); A0_32_0 = vmulq_f32(A0_32_0, sqD0_32_0);
+        A1_32_1 = vmulq_f32(A1_32_1, sqD1_32_1); A1_32_0 = vmulq_f32(A1_32_0, sqD1_32_0);
+        A2_32_1 = vmulq_f32(A2_32_1, sqD2_32_1); A2_32_0 = vmulq_f32(A2_32_0, sqD2_32_0);
+        A3_32_1 = vmulq_f32(A3_32_1, sqD3_32_1); A3_32_0 = vmulq_f32(A3_32_0, sqD3_32_0);
+        tmp_1 = vmlsq_f32(tmp_1, A0_32_1, x0_32_1); tmp_0 = vmlsq_f32(tmp_0, A0_32_0 , x0_32_0); 
+        tmp_1 = vmlsq_f32(tmp_1, A1_32_1, x1_32_1); tmp_0 = vmlsq_f32(tmp_0, A1_32_0 , x1_32_0); 
+        tmp_1 = vmlsq_f32(tmp_1, A2_32_1, x2_32_1); tmp_0 = vmlsq_f32(tmp_0, A2_32_0 , x2_32_0); 
+        tmp_1 = vmlsq_f32(tmp_1, A3_32_1, x3_32_1); tmp_0 = vmlsq_f32(tmp_0, A3_32_0 , x3_32_0);
+        // A15~A18
+        A15_18 -= GROUP_LEN * 4;
+        A0_3_16 = vld4q_f16(A15_18); __builtin_prefetch(A15_18 - GROUP_LEN * 16, 0, 0);
+        A0_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[0])); A0_32_1 = vcvt_high_f32_f16(A0_3_16.val[0]);
+        A1_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[1])); A1_32_1 = vcvt_high_f32_f16(A0_3_16.val[1]);
+        A2_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[2])); A2_32_1 = vcvt_high_f32_f16(A0_3_16.val[2]);
+        A3_32_0 = vcvt_f32_f16(vget_low_f16(A0_3_16.val[3])); A3_32_1 = vcvt_high_f32_f16(A0_3_16.val[3]);
+        x15 -= NEON_LEN; x0_32_1 = vld1q_f32(x15); x15 -= NEON_LEN; x0_32_0 = vld1q_f32(x15); __builtin_prefetch(x15 - GROUP_LEN, 0);
+        x16 -= NEON_LEN; x1_32_1 = vld1q_f32(x16); x16 -= NEON_LEN; x1_32_0 = vld1q_f32(x16); __builtin_prefetch(x16 - GROUP_LEN, 0);
+        x17 -= NEON_LEN; x2_32_1 = vld1q_f32(x17); x17 -= NEON_LEN; x2_32_0 = vld1q_f32(x17); __builtin_prefetch(x17 - GROUP_LEN, 0);
+        x18 -= NEON_LEN; x3_32_1 = vld1q_f32(x18); x18 -= NEON_LEN; x3_32_0 = vld1q_f32(x18); __builtin_prefetch(x18 - GROUP_LEN, 0);
+        sqD15 -= NEON_LEN; sqD0_32_1 = vld1q_f32(sqD15); sqD15 -= NEON_LEN; sqD0_32_0 = vld1q_f32(sqD15); __builtin_prefetch(sqD15 - GROUP_LEN, 0);
+        sqD16 -= NEON_LEN; sqD1_32_1 = vld1q_f32(sqD16); sqD16 -= NEON_LEN; sqD1_32_0 = vld1q_f32(sqD16); __builtin_prefetch(sqD16 - GROUP_LEN, 0);
+        sqD17 -= NEON_LEN; sqD2_32_1 = vld1q_f32(sqD17); sqD17 -= NEON_LEN; sqD2_32_0 = vld1q_f32(sqD17); __builtin_prefetch(sqD17 - GROUP_LEN, 0);
+        sqD18 -= NEON_LEN; sqD3_32_1 = vld1q_f32(sqD18); sqD18 -= NEON_LEN; sqD3_32_0 = vld1q_f32(sqD18); __builtin_prefetch(sqD18 - GROUP_LEN, 0);
+        A0_32_1 = vmulq_f32(A0_32_1, sqD0_32_1); A0_32_0 = vmulq_f32(A0_32_0, sqD0_32_0);
+        A1_32_1 = vmulq_f32(A1_32_1, sqD1_32_1); A1_32_0 = vmulq_f32(A1_32_0, sqD1_32_0);
+        A2_32_1 = vmulq_f32(A2_32_1, sqD2_32_1); A2_32_0 = vmulq_f32(A2_32_0, sqD2_32_0);
+        A3_32_1 = vmulq_f32(A3_32_1, sqD3_32_1); A3_32_0 = vmulq_f32(A3_32_0, sqD3_32_0);
+        tmp_1 = vmlsq_f32(tmp_1, A0_32_1, x0_32_1); tmp_0 = vmlsq_f32(tmp_0, A0_32_0 , x0_32_0); 
+        tmp_1 = vmlsq_f32(tmp_1, A1_32_1, x1_32_1); tmp_0 = vmlsq_f32(tmp_0, A1_32_0 , x1_32_0); 
+        tmp_1 = vmlsq_f32(tmp_1, A2_32_1, x2_32_1); tmp_0 = vmlsq_f32(tmp_0, A2_32_0 , x2_32_0); 
+        tmp_1 = vmlsq_f32(tmp_1, A3_32_1, x3_32_1); tmp_0 = vmlsq_f32(tmp_0, A3_32_0 , x3_32_0);
+        rhs -= NEON_LEN; vst1q_f32(rhs, tmp_1); rhs -= NEON_LEN; vst1q_f32(rhs, tmp_0); __builtin_prefetch(rhs - GROUP_LEN, 1);
+    }
+    for ( ; k > min_nk; k -= NEON_LEN) {
+        float16x4x4_t A0_3_16;
+        float32x4_t tmp_0;
+        b9 -= NEON_LEN; tmp_0 = vld1q_f32(b9); __builtin_prefetch(b9 - NEON_LEN, 0);
+        sqD9 -= NEON_LEN; myQ_0 = vld1q_f32(sqD9); __builtin_prefetch(sqD9 - NEON_LEN, 0);
+        tmp_0 = vdivq_f32(tmp_0, myQ_0);
+        // A0~A3
+        A0_3 -= NEON_LEN * 4;
+        A0_3_16 = vld4_f16(A0_3); __builtin_prefetch(A0_3 - NEON_LEN * 16, 0, 0);
+        A0_32_0 = vcvt_f32_f16(A0_3_16.val[0]);
+        A1_32_0 = vcvt_f32_f16(A0_3_16.val[1]);
+        A2_32_0 = vcvt_f32_f16(A0_3_16.val[2]);
+        A3_32_0 = vcvt_f32_f16(A0_3_16.val[3]);
+        x0 -= NEON_LEN; x0_32_0 = vld1q_f32(x0); __builtin_prefetch(x0 - NEON_LEN, 0);
+        x1 -= NEON_LEN; x1_32_0 = vld1q_f32(x1); __builtin_prefetch(x1 - NEON_LEN, 0);
+        x2 -= NEON_LEN; x2_32_0 = vld1q_f32(x2); __builtin_prefetch(x2 - NEON_LEN, 0);
+        x3 -= NEON_LEN; x3_32_0 = vld1q_f32(x3); __builtin_prefetch(x3 - NEON_LEN, 0);
+        sqD0 -= NEON_LEN; sqD0_32_0 = vld1q_f32(sqD0); __builtin_prefetch(sqD0 - NEON_LEN, 0);
+        sqD1 -= NEON_LEN; sqD1_32_0 = vld1q_f32(sqD1); __builtin_prefetch(sqD1 - NEON_LEN, 0);
+        sqD2 -= NEON_LEN; sqD2_32_0 = vld1q_f32(sqD2); __builtin_prefetch(sqD2 - NEON_LEN, 0);
+        sqD3 -= NEON_LEN; sqD3_32_0 = vld1q_f32(sqD3); __builtin_prefetch(sqD3 - NEON_LEN, 0);
+        A0_32_0 = vmulq_f32(A0_32_0, sqD0_32_0);
+        A1_32_0 = vmulq_f32(A1_32_0, sqD1_32_0);
+        A2_32_0 = vmulq_f32(A2_32_0, sqD2_32_0);
+        A3_32_0 = vmulq_f32(A3_32_0, sqD3_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A0_32_0, x0_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A1_32_0, x1_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A2_32_0, x2_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A3_32_0, x3_32_0);
+        // A4~A7
+        A4_7 -= NEON_LEN * 4;
+        A0_3_16 = vld4_f16(A4_7); __builtin_prefetch(A4_7 - NEON_LEN * 16, 0, 0);
+        A0_32_0 = vcvt_f32_f16(A0_3_16.val[0]);
+        A1_32_0 = vcvt_f32_f16(A0_3_16.val[1]);
+        A2_32_0 = vcvt_f32_f16(A0_3_16.val[2]);
+        A3_32_0 = vcvt_f32_f16(A0_3_16.val[3]);
+        x4 -= NEON_LEN; x0_32_0 = vld1q_f32(x4); __builtin_prefetch(x4 - NEON_LEN, 0);
+        x5 -= NEON_LEN; x1_32_0 = vld1q_f32(x5); __builtin_prefetch(x5 - NEON_LEN, 0);
+        x6 -= NEON_LEN; x2_32_0 = vld1q_f32(x6); __builtin_prefetch(x6 - NEON_LEN, 0);
+        x7 -= NEON_LEN; x3_32_0 = vld1q_f32(x7); __builtin_prefetch(x7 - NEON_LEN, 0);
+        sqD4 -= NEON_LEN; sqD0_32_0 = vld1q_f32(sqD4); __builtin_prefetch(sqD4 - NEON_LEN, 0);
+        sqD5 -= NEON_LEN; sqD1_32_0 = vld1q_f32(sqD5); __builtin_prefetch(sqD5 - NEON_LEN, 0);
+        sqD6 -= NEON_LEN; sqD2_32_0 = vld1q_f32(sqD6); __builtin_prefetch(sqD6 - NEON_LEN, 0);
+        sqD7 -= NEON_LEN; sqD3_32_0 = vld1q_f32(sqD7); __builtin_prefetch(sqD7 - NEON_LEN, 0);
+        A0_32_0 = vmulq_f32(A0_32_0, sqD0_32_0);
+        A1_32_0 = vmulq_f32(A1_32_0, sqD1_32_0);
+        A2_32_0 = vmulq_f32(A2_32_0, sqD2_32_0);
+        A3_32_0 = vmulq_f32(A3_32_0, sqD3_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A0_32_0 , x0_32_0); 
+        tmp_0 = vmlsq_f32(tmp_0, A1_32_0 , x1_32_0); 
+        tmp_0 = vmlsq_f32(tmp_0, A2_32_0 , x2_32_0); 
+        tmp_0 = vmlsq_f32(tmp_0, A3_32_0 , x3_32_0);
+        // A11~A14
+        A11_14 -= NEON_LEN * 4;
+        A0_3_16 = vld4_f16(A11_14); __builtin_prefetch(A11_14 - NEON_LEN * 16, 0, 0);
+        A0_32_0 = vcvt_f32_f16(A0_3_16.val[0]);
+        A1_32_0 = vcvt_f32_f16(A0_3_16.val[1]);
+        A2_32_0 = vcvt_f32_f16(A0_3_16.val[2]);
+        A3_32_0 = vcvt_f32_f16(A0_3_16.val[3]);
+        x11 -= NEON_LEN; x0_32_0 = vld1q_f32(x11); __builtin_prefetch(x11 - NEON_LEN, 0);
+        x12 -= NEON_LEN; x1_32_0 = vld1q_f32(x12); __builtin_prefetch(x12 - NEON_LEN, 0);
+        x13 -= NEON_LEN; x2_32_0 = vld1q_f32(x13); __builtin_prefetch(x13 - NEON_LEN, 0);
+        x14 -= NEON_LEN; x3_32_0 = vld1q_f32(x14); __builtin_prefetch(x14 - NEON_LEN, 0);
+        sqD11 -= NEON_LEN; sqD0_32_0 = vld1q_f32(sqD11); __builtin_prefetch(sqD11 - NEON_LEN, 0);
+        sqD12 -= NEON_LEN; sqD1_32_0 = vld1q_f32(sqD12); __builtin_prefetch(sqD12 - NEON_LEN, 0);
+        sqD13 -= NEON_LEN; sqD2_32_0 = vld1q_f32(sqD13); __builtin_prefetch(sqD13 - NEON_LEN, 0);
+        sqD14 -= NEON_LEN; sqD3_32_0 = vld1q_f32(sqD14); __builtin_prefetch(sqD14 - NEON_LEN, 0);
+        A0_32_0 = vmulq_f32(A0_32_0, sqD0_32_0);
+        A1_32_0 = vmulq_f32(A1_32_0, sqD1_32_0);
+        A2_32_0 = vmulq_f32(A2_32_0, sqD2_32_0);
+        A3_32_0 = vmulq_f32(A3_32_0, sqD3_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A0_32_0 , x0_32_0); 
+        tmp_0 = vmlsq_f32(tmp_0, A1_32_0 , x1_32_0); 
+        tmp_0 = vmlsq_f32(tmp_0, A2_32_0 , x2_32_0); 
+        tmp_0 = vmlsq_f32(tmp_0, A3_32_0 , x3_32_0);
+        // A15~A18
+        A15_18 -= NEON_LEN * 4;
+        A0_3_16 = vld4_f16(A15_18); __builtin_prefetch(A15_18 - NEON_LEN * 16, 0, 0);
+        A0_32_0 = vcvt_f32_f16(A0_3_16.val[0]);
+        A1_32_0 = vcvt_f32_f16(A0_3_16.val[1]);
+        A2_32_0 = vcvt_f32_f16(A0_3_16.val[2]);
+        A3_32_0 = vcvt_f32_f16(A0_3_16.val[3]);
+        x15 -= NEON_LEN; x0_32_0 = vld1q_f32(x15); __builtin_prefetch(x15 - NEON_LEN, 0);
+        x16 -= NEON_LEN; x1_32_0 = vld1q_f32(x16); __builtin_prefetch(x16 - NEON_LEN, 0);
+        x17 -= NEON_LEN; x2_32_0 = vld1q_f32(x17); __builtin_prefetch(x17 - NEON_LEN, 0);
+        x18 -= NEON_LEN; x3_32_0 = vld1q_f32(x18); __builtin_prefetch(x18 - NEON_LEN, 0);
+        sqD15 -= NEON_LEN; sqD0_32_0 = vld1q_f32(sqD15); __builtin_prefetch(sqD15 - NEON_LEN, 0);
+        sqD16 -= NEON_LEN; sqD1_32_0 = vld1q_f32(sqD16); __builtin_prefetch(sqD16 - NEON_LEN, 0);
+        sqD17 -= NEON_LEN; sqD2_32_0 = vld1q_f32(sqD17); __builtin_prefetch(sqD17 - NEON_LEN, 0);
+        sqD18 -= NEON_LEN; sqD3_32_0 = vld1q_f32(sqD18); __builtin_prefetch(sqD18 - NEON_LEN, 0);
+        A0_32_0 = vmulq_f32(A0_32_0, sqD0_32_0);
+        A1_32_0 = vmulq_f32(A1_32_0, sqD1_32_0);
+        A2_32_0 = vmulq_f32(A2_32_0, sqD2_32_0);
+        A3_32_0 = vmulq_f32(A3_32_0, sqD3_32_0);
+        tmp_0 = vmlsq_f32(tmp_0, A0_32_0 , x0_32_0); 
+        tmp_0 = vmlsq_f32(tmp_0, A1_32_0 , x1_32_0); 
+        tmp_0 = vmlsq_f32(tmp_0, A2_32_0 , x2_32_0); 
+        tmp_0 = vmlsq_f32(tmp_0, A3_32_0 , x3_32_0);
+        rhs -= NEON_LEN; vst1q_f32(rhs, tmp_0); __builtin_prefetch(rhs - NEON_LEN, 1);
+    }
+    A0_3 -= 4; A4_7 -= 4; A11_14 -= 4; A15_18 -= 4;
+    x0 -= min_nk; x1 -= min_nk; x2 -= min_nk; x3 -= min_nk;
+    x4 -= min_nk; x5 -= min_nk; x6 -= min_nk; x7 -= min_nk;
+    x11-= min_nk; x12-= min_nk; x13-= min_nk; x14-= min_nk;
+    x15-= min_nk; x16-= min_nk; x17-= min_nk; x18-= min_nk;
+    sqD0 -= min_nk; sqD1 -= min_nk; sqD2 -= min_nk; sqD3 -= min_nk;
+    sqD4 -= min_nk; sqD5 -= min_nk; sqD6 -= min_nk; sqD7 -= min_nk;
+    sqD11-= min_nk; sqD12-= min_nk; sqD13-= min_nk; sqD14-= min_nk;
+    sqD15-= min_nk; sqD16-= min_nk; sqD17-= min_nk; sqD18-= min_nk;
+    sqD9 -= min_nk; b9 -= min_nk; rhs -= min_nk;
+    for (k = min_nk - 1; k >= 0; k--) {
+        float tmp = 
+        + A0_3[0]*x0[k]*sqD0[k] + A0_3[1]*x1[k]*sqD1[k] + A0_3[2]*x2[k]*sqD2[k] + A0_3[3]*x3[k]*sqD3[k]
+        + A4_7[0]*x4[k]*sqD4[k] + A4_7[1]*x5[k]*sqD5[k] + A4_7[2]*x6[k]*sqD6[k] + A4_7[3]*x7[k]*sqD7[k]
+        
+        + A11_14[0]*x11[k]*sqD11[k] + A11_14[1]*x12[k]*sqD12[k] + A11_14[2]*x13[k]*sqD13[k] + A11_14[3]*x14[k]*sqD14[k]
+        + A15_18[0]*x15[k]*sqD15[k] + A15_18[1]*x16[k]*sqD16[k] + A15_18[2]*x17[k]*sqD17[k] + A15_18[3]*x18[k]*sqD18[k];
+        rhs[k] = b9[k] / sqD9[k] - tmp;// b - L*x_{k+1}
         A0_3 -= 4; A4_7 -= 4; A11_14 -= 4; A15_18 -= 4;
     }
 }
