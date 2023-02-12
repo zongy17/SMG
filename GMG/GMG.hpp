@@ -452,7 +452,7 @@ void GeometricMultiGrid<idx_t, data_t, setup_t, calc_t>::V_Cycle(const par_struc
             smoother[i]->Mult(*F_array[i], *U_array[i], this->zero_guess && j == 0);
         
         // 计算在当前层平滑后的残差
-        if constexpr (sizeof(data_t) == sizeof(calc_t))
+        if constexpr (sizeof(setup_t) == sizeof(calc_t))
             A_array_high[i]->Mult(*U_array[i], *aux_arr[i], false);
         else
             A_array_low [i]->Mult(*U_array[i], *aux_arr[i], false);
@@ -471,9 +471,9 @@ void GeometricMultiGrid<idx_t, data_t, setup_t, calc_t>::V_Cycle(const par_struc
     assert(i == num_levs - 1);// 最粗层做前平滑
     if (relax_types[i] == GaussElim) {// 直接法只做一次
             if (A_array_high[i]->scaled) {
-                seq_vec_elemwise_div(*(F_array[i]->local_vector), *(A_array_high[i]->sqrt_D));// 计算Fbar = D^{-1/2}*F
+                seq_vec_elemwise_div(*(F_array[i]->local_vector), *(A_array_low[i]->sqrt_D));// 计算Fbar = D^{-1/2}*F
                 smoother[i]->Mult(*F_array[i], *U_array[i], this->zero_guess);// 计算 Ubar = Abar^{-1}*Fbar
-                seq_vec_elemwise_div(*(U_array[i]->local_vector), *(A_array_high[i]->sqrt_D));// 计算U = D^{1/2}*Ubar
+                seq_vec_elemwise_div(*(U_array[i]->local_vector), *(A_array_low[i]->sqrt_D));// 计算U = D^{1/2}*Ubar
             } else {
                 smoother[i]->Mult(*F_array[i], *U_array[i], this->zero_guess);
             }

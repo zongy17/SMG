@@ -428,7 +428,7 @@ void DenseLU<idx_t, data_t, setup_t, calc_t>::Setup()
     // 将结构化排布的稀疏矩阵转成CSR
     idx_t * row_ptr = new idx_t [global_dof+1];
     idx_t * col_idx = new idx_t [global_dof * num_stencil];// 按照最大的可能上限开辟
-    setup_t * vals    = new setup_t[global_dof * num_stencil];
+    calc_t * vals    = new calc_t[global_dof * num_stencil];
     int nnz_cnt = 0;
     row_ptr[0] = 0;// init
     for (idx_t j = 0; j < gy; j++)
@@ -477,7 +477,7 @@ void DenseLU<idx_t, data_t, setup_t, calc_t>::Setup()
                     ngb_i >= 0 && ngb_i < gx && 
                     ngb_k >= 0 && ngb_k < gz) {
                     idx_t col = (ngb_j * gx + ngb_i) * gz + ngb_k;
-                    dense_A[row * global_dof + col] = buf[row * num_stencil + d];
+                    dense_A[row * global_dof + col] = (calc_t) buf[row * num_stencil + d];
                 }
             }
         }
