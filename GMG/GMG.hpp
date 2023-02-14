@@ -177,7 +177,7 @@ void GeometricMultiGrid<idx_t, data_t, setup_t, calc_t>::Setup(const par_structM
     // 根据外层问题的进程划分，来确定预条件多重网格的进程划分
     comm = A_problem.comm_pkg->cart_comm;
     MPI_Barrier(comm);
-    double t = wall_time();
+    double t = - wall_time();
 
     int my_pid;
     MPI_Comm_rank(comm, &my_pid);
@@ -398,9 +398,10 @@ void GeometricMultiGrid<idx_t, data_t, setup_t, calc_t>::Setup(const par_structM
         aux_arr[ilev]->set_val(0.0, true);
     }
     
-    MPI_Barrier(comm);
-    t = wall_time() - t;
-    if (my_pid == 0) printf("Setup costs %.6f s\n", t);
+    t += wall_time();
+    double t_max;
+    MPI_Allreduce(&t, &t_max, 1, MPI_DOUBLE, MPI_MAX, comm);
+    if (my_pid == 0) printf("Setup costs %.6f s\n", t_max);
 
 #ifndef NDEBUG // 检验限制和插值正确性
     // 检验限制算子的正确性
