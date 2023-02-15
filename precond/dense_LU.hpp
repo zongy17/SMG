@@ -555,6 +555,7 @@ void DenseLU<idx_t, data_t, setup_t, calc_t>::Mult(const par_structVector<idx_t,
             const idx_t lx = x.local_x           , ly = x.local_y           , lz = x.local_z           ;
             const idx_t hx = x.halo_x            , hy = x.halo_y            , hz = x.halo_z            ;
             const idx_t vec_ki_size = x.slice_ki_size, vec_k_size = x.slice_k_size;
+            #pragma omp parallel for collapse(3) schedule(static)
             for (idx_t j = 0; j < ly; j++)
             for (idx_t i = 0; i < lx; i++)
             for (idx_t k = 0; k < lz; k++) {
