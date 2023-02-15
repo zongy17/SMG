@@ -1346,7 +1346,7 @@ void inline SOA_point_backward_ALL_3d7_Cal32Stg16_scaled(const int num,
     A0_3 -= 4; A4_6 -= 3;
     x0 -= min_nk; x1 -= min_nk; sqD0 -= min_nk; sqD1 -= min_nk; sqD2 -= min_nk;
     x3 -= min_nk; sqD3 -= min_nk; b3 -= min_nk;
-    x5 -= min_nk; x6 -= min_nk; sqD5 -= min_nk; sqD6 -= min_nk;
+    x5 -= min_nk; x6 -= min_nk; sqD4 -= min_nk; sqD5 -= min_nk; sqD6 -= min_nk;
     for (k = min_nk - 1; k >= 0; k--) {// 做完剩下的元素
         float diag_val = A0_3[3] * sqD3[k];
         float tmp = 
