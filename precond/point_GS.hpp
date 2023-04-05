@@ -4,14 +4,14 @@
 #include "precond.hpp"
 #include "../utils/par_struct_mat.hpp"
 
-template<typename idx_t, typename data_t>
+template<typename idx_t, typename data_t, typename setup_t>
 struct IrrgPts_Effect
 {
     idx_t loc_id;// local idx to access irrgPts_vec array
     idx_t i, j, k;// 该非规则点所影响的结构点的三维全局坐标
     data_t val;// 影响的值
     IrrgPts_Effect() {}
-    IrrgPts_Effect(idx_t ir, idx_t i, idx_t j, idx_t k, data_t v): loc_id(ir), i(i), j(j), k(k), val(v) {}
+    IrrgPts_Effect(idx_t ir, idx_t i, idx_t j, idx_t k, setup_t v): loc_id(ir), i(i), j(j), k(k), val(v) {}
     bool operator < (const IrrgPts_Effect & b) const {
         if (j < b.j) return true;
         else if (j > b.j) return false;
@@ -26,16 +26,23 @@ struct IrrgPts_Effect
     }
 };
 
+// template<typename idx_t, typename data_t>
+// struct IrrgPts_invDiag
+// {
+//     idx_t gid;// 非规则点的全局索引
+//     data_t val;
+// };
+
 // data_t是数据存储的精度，calc_t是算子作用时的精度（对应向量的精度）
-template<typename idx_t, typename data_t, typename calc_t>
-class PointGS : public Solver<idx_t, data_t, calc_t> {
+template<typename idx_t, typename data_t, typename setup_t, typename calc_t>
+class PointGS : public Solver<idx_t, data_t, setup_t, calc_t> {
 public:
     // 对称GS：0 for sym, 1 for forward, -1 backward
     SCAN_TYPE scan_type = SYMMETRIC;
     mutable bool last_time_forward = false;
 
     // operator (often as matrix-A)
-    const Operator<idx_t, calc_t, calc_t> * oper = nullptr;
+    const Operator<idx_t, setup_t, setup_t> * oper = nullptr;
 
     // separate diagonal values if for efficiency concern is needed
     // should only be used when separation is cheap
@@ -43,6 +50,10 @@ public:
     seq_structMatrix<idx_t, data_t, calc_t> * L = nullptr;
     seq_structMatrix<idx_t, data_t, calc_t> * U = nullptr;
     void separate_LU();
+
+    seq_structVector<idx_t, calc_t> * sqrt_D = nullptr;
+    // idx_t num_irrgPts_invD = 0;
+    // IrrgPts_invDiag<idx_t, data_t> * irrgPts_invD = nullptr;// 非规则点的对角元（对自己的影响）
 
     bool DiagGroups_separated = false;
     idx_t DiagGroups_cnt = 0;
@@ -53,7 +64,7 @@ public:
     // 将A矩阵内的非规则点对结构点的影响提取出来，并按照自然序排序，以便在做结构点
     void prepare_irrgPts();
     idx_t num_irrgPts_effect = 0;
-    IrrgPts_Effect<idx_t, data_t> * irrg_to_Struct = nullptr;// 局部非规则点的一维序号，对应结构点的三维坐标（已带偏移），本结构点受非结构点的影响
+    IrrgPts_Effect<idx_t, data_t, setup_t> * irrg_to_Struct = nullptr;// 局部非规则点的一维序号，对应结构点的三维坐标（已带偏移），本结构点受非结构点的影响
 
     void (*AOS_forward_zero)
         (const idx_t, const idx_t, const idx_t, const data_t, const data_t*, const data_t*, const calc_t*, calc_t*, const calc_t*) = nullptr;
@@ -89,13 +100,13 @@ public:
     void (*SOA_backward_ALL_irr)
         (const idx_t, const idx_t, const idx_t, const calc_t, const data_t**, const calc_t*, calc_t*, const calc_t*, const calc_t*) = nullptr;
 
-    PointGS() : Solver<idx_t, data_t, calc_t>() {  }
-    PointGS(SCAN_TYPE type) : Solver<idx_t, data_t, calc_t>(), scan_type(type) {
+    PointGS() : Solver<idx_t, data_t, setup_t, calc_t>() {  }
+    PointGS(SCAN_TYPE type) : Solver<idx_t, data_t, setup_t, calc_t>(), scan_type(type) {
         if (type == FORW_BACK)      last_time_forward = false;
         else if (type == BACK_FORW) last_time_forward = true;
     }
 
-    virtual void SetOperator(const Operator<idx_t, calc_t, calc_t> & op) {
+    virtual void SetOperator(const Operator<idx_t, setup_t, setup_t> & op) {
         oper = & op;
 
         this->input_dim[0] = op.input_dim[0];
@@ -106,7 +117,8 @@ public:
         this->output_dim[1] = op.output_dim[1];
         this->output_dim[2] = op.output_dim[2];
 
-        const idx_t num_diag = ((const par_structMatrix<idx_t, calc_t, calc_t>&)op).num_diag;
+        prepare_irrgPts();
+        const idx_t num_diag = ((const par_structMatrix<idx_t, setup_t, setup_t>&)op).num_diag;
         if constexpr (sizeof(calc_t) != sizeof(data_t)) {
 #ifdef __aarch64__
             separate_Diags();
@@ -115,14 +127,14 @@ public:
                 switch (num_diag)
                 {
                 case 7:
-                    SOA_forward_zero = SOA_point_forward_zero_3d7_Cal32Stg16;
-                    SOA_forward_ALL  = SOA_point_forward_ALL_3d7_Cal32Stg16;
+                    SOA_forward_zero = sqrt_D ? nullptr : SOA_point_forward_zero_3d7_Cal32Stg16;
+                    SOA_forward_ALL  = sqrt_D ? nullptr : SOA_point_forward_ALL_3d7_Cal32Stg16;
                     SOA_backward_zero= nullptr;// 没必要实现，实际不会用到
-                    SOA_backward_ALL = SOA_point_backward_ALL_3d7_Cal32Stg16;
-                    SOA_forward_zero_irr = SOA_point_forward_zero_3d7_Cal32Stg16_irr;
-                    SOA_forward_ALL_irr  = SOA_point_forward_ALL_3d7_Cal32Stg16_irr;
+                    SOA_backward_ALL = sqrt_D ? nullptr : SOA_point_backward_ALL_3d7_Cal32Stg16;
+                    SOA_forward_zero_irr = sqrt_D ? nullptr : SOA_point_forward_zero_3d7_Cal32Stg16_irr;
+                    SOA_forward_ALL_irr  = sqrt_D ? nullptr : SOA_point_forward_ALL_3d7_Cal32Stg16_irr;
                     SOA_backward_zero_irr= nullptr;
-                    SOA_backward_ALL_irr = SOA_point_backward_ALL_3d7_Cal32Stg16_irr;
+                    SOA_backward_ALL_irr = sqrt_D ? nullptr : SOA_point_backward_ALL_3d7_Cal32Stg16_irr;
                     break;
                 default:
                     MPI_Abort(MPI_COMM_WORLD, -10202);
@@ -140,20 +152,19 @@ public:
             switch(num_diag)
             {
             case 7:
-                AOS_forward_zero        = AOS_point_forward_zero_3d7<idx_t, data_t, calc_t>;
-                AOS_forward_ALL         = AOS_point_forward_ALL_3d7<idx_t, data_t, calc_t>;
-                AOS_backward_zero       = AOS_point_backward_zero_3d7<idx_t, data_t, calc_t>;
-                AOS_backward_ALL        = AOS_point_backward_ALL_3d7<idx_t, data_t, calc_t>;
-                AOS_forward_zero_irr    = AOS_point_forward_zero_3d7_irr<idx_t, data_t, calc_t>;
-                AOS_forward_ALL_irr     = AOS_point_forward_ALL_3d7_irr<idx_t, data_t, calc_t>;
-                AOS_backward_zero_irr   = AOS_point_backward_zero_3d7_irr<idx_t, data_t, calc_t>;
-                AOS_backward_ALL_irr    = AOS_point_backward_ALL_3d7_irr<idx_t, data_t, calc_t>;
+                AOS_forward_zero        = sqrt_D ? nullptr : AOS_point_forward_zero_3d7<idx_t, data_t, calc_t>;
+                AOS_forward_ALL         = sqrt_D ? nullptr : AOS_point_forward_ALL_3d7<idx_t, data_t, calc_t>;
+                AOS_backward_zero       = sqrt_D ? nullptr : AOS_point_backward_zero_3d7<idx_t, data_t, calc_t>;
+                AOS_backward_ALL        = sqrt_D ? nullptr : AOS_point_backward_ALL_3d7<idx_t, data_t, calc_t>;
+                AOS_forward_zero_irr    = sqrt_D ? nullptr : AOS_point_forward_zero_3d7_irr<idx_t, data_t, calc_t>;
+                AOS_forward_ALL_irr     = sqrt_D ? nullptr : AOS_point_forward_ALL_3d7_irr<idx_t, data_t, calc_t>;
+                AOS_backward_zero_irr   = sqrt_D ? nullptr : AOS_point_backward_zero_3d7_irr<idx_t, data_t, calc_t>;
+                AOS_backward_ALL_irr    = sqrt_D ? nullptr : AOS_point_backward_ALL_3d7_irr<idx_t, data_t, calc_t>;
                 break;
             default:
                 MPI_Abort(MPI_COMM_WORLD, -10200);
             }
         }
-        prepare_irrgPts();
     }
 
     virtual void SetScanType(SCAN_TYPE type) {scan_type = type;}
@@ -192,12 +203,14 @@ public:
     virtual ~PointGS();
 };
 
-template<typename idx_t, typename data_t, typename calc_t>
-PointGS<idx_t, data_t, calc_t>::~PointGS() {
+template<typename idx_t, typename data_t, typename setup_t, typename calc_t>
+PointGS<idx_t, data_t, setup_t, calc_t>::~PointGS() {
     if (LU_separated) {
         if (L != nullptr) {delete L; L = nullptr;}
         if (U != nullptr) {delete U; U = nullptr;}
     }
+    if (sqrt_D != nullptr) {delete sqrt_D; sqrt_D = nullptr;}
+    // if (irrgPts_invD != nullptr) {delete irrgPts_invD; irrgPts_invD = nullptr;}
     if (DiagGroups_separated) {
         for (idx_t id = 0; id < DiagGroups_cnt; id++) {
             delete DiagGroups[id];
@@ -207,14 +220,15 @@ PointGS<idx_t, data_t, calc_t>::~PointGS() {
     }
 }
 
-template<typename idx_t, typename data_t, typename calc_t>
-void PointGS<idx_t, data_t, calc_t>::prepare_irrgPts()
+template<typename idx_t, typename data_t, typename setup_t, typename calc_t>
+void PointGS<idx_t, data_t, setup_t, calc_t>::prepare_irrgPts()
 {
-    const par_structMatrix<idx_t, calc_t, calc_t> & par_A = *((par_structMatrix<idx_t, calc_t, calc_t> *)(this->oper));
+    const par_structMatrix<idx_t, setup_t, setup_t> & par_A = *((par_structMatrix<idx_t, setup_t, setup_t> *)(this->oper));
     if (num_irrgPts_effect != 0)
         delete irrg_to_Struct;
 
-    std::vector<IrrgPts_Effect<idx_t,data_t> > container;
+    // irrgPts_invD = new IrrgPts_invDiag<idx_t, data_t> [par_A.num_irrgPts];
+    std::vector<IrrgPts_Effect<idx_t,data_t,setup_t> > container;
     for (idx_t ir = 0; ir < par_A.num_irrgPts; ir++) {
         idx_t pbeg = par_A.irrgPts[ir].beg, pend = pbeg + par_A.irrgPts[ir].nnz;
         for (idx_t p = pbeg; p < pend; p++) {
@@ -222,10 +236,17 @@ void PointGS<idx_t, data_t, calc_t>::prepare_irrgPts()
                 idx_t loc_i = par_A.irrgPts_ngb_ijk[p*3  ] - par_A.offset_x + par_A.local_matrix->halo_x;
                 idx_t loc_j = par_A.irrgPts_ngb_ijk[p*3+1] - par_A.offset_y + par_A.local_matrix->halo_y;
                 idx_t loc_k = par_A.irrgPts_ngb_ijk[p*3+2] - par_A.offset_z + par_A.local_matrix->halo_z;
-                data_t val = par_A.irrgPts_A_vals[p*2+1];
-                IrrgPts_Effect<idx_t, data_t> obj(ir, loc_i, loc_j, loc_k, val);
+                setup_t val = par_A.irrgPts_A_vals[p*2+1];
+                IrrgPts_Effect<idx_t, data_t, setup_t> obj(ir, loc_i, loc_j, loc_k, val);
                 container.push_back(obj);
             }
+            // else {// == -1, 对自己的影响
+            //     idx_t p2 = p<<1;
+            //     assert(par_A.irrgPts_A_vals[p2] == par_A.irrgPts_A_vals[p2 + 1]);
+            //     setup_t tmp = 1.0 / par_A.irrgPts_A_vals[p2];
+            //     irrgPts_invD[ir].gid = par_A.irrgPts[ir].gid;
+            //     irrgPts_invD[ir].val = tmp;
+            // }
         }
     }
     std::sort(container.begin(), container.end());
@@ -248,7 +269,7 @@ void PointGS<idx_t, data_t, calc_t>::prepare_irrgPts()
 #endif
     }
     // Copy
-    irrg_to_Struct = new IrrgPts_Effect<idx_t,data_t> [num_irrgPts_effect];
+    irrg_to_Struct = new IrrgPts_Effect<idx_t,data_t,setup_t> [num_irrgPts_effect];
     int my_pid; MPI_Comm_rank(MPI_COMM_WORLD, &my_pid);
     for (idx_t i = 0; i < num_irrgPts_effect; i++) {
         irrg_to_Struct[i] = container[i];
@@ -259,8 +280,8 @@ void PointGS<idx_t, data_t, calc_t>::prepare_irrgPts()
     }
 }
 
-template<typename idx_t, typename data_t, typename calc_t>
-void PointGS<idx_t, data_t, calc_t>::Mult(const par_structVector<idx_t, calc_t> & b, par_structVector<idx_t, calc_t> & x) const {
+template<typename idx_t, typename data_t, typename setup_t, typename calc_t>
+void PointGS<idx_t, data_t, setup_t, calc_t>::Mult(const par_structVector<idx_t, calc_t> & b, par_structVector<idx_t, calc_t> & x) const {
     assert(this->oper != nullptr);
     CHECK_INPUT_DIM(*this, x);
     CHECK_OUTPUT_DIM(*this, b);
@@ -378,12 +399,12 @@ void PointGS<idx_t, data_t, calc_t>::Mult(const par_structVector<idx_t, calc_t> 
         }
 }
 
-template<typename idx_t, typename data_t, typename calc_t>
-void PointGS<idx_t, data_t, calc_t>::AOS_ForwardPass(const par_structVector<idx_t, calc_t> & b, par_structVector<idx_t, calc_t> & x) const
+template<typename idx_t, typename data_t, typename setup_t, typename calc_t>
+void PointGS<idx_t, data_t, setup_t, calc_t>::AOS_ForwardPass(const par_structVector<idx_t, calc_t> & b, par_structVector<idx_t, calc_t> & x) const
 {
     const seq_structVector<idx_t, calc_t> & b_vec = *(b.local_vector);
           seq_structVector<idx_t, calc_t> & x_vec = *(x.local_vector);
-    const par_structMatrix<idx_t, calc_t, calc_t> * par_A = (par_structMatrix<idx_t, calc_t, calc_t>*)(this->oper);
+    const par_structMatrix<idx_t, setup_t, setup_t> * par_A = (par_structMatrix<idx_t, setup_t, setup_t>*)(this->oper);
     CHECK_LOCAL_HALO(x_vec, b_vec);
     assert(LU_separated);
 
@@ -406,7 +427,7 @@ void PointGS<idx_t, data_t, calc_t>::AOS_ForwardPass(const par_structVector<idx_
                     const data_t*, const data_t*, const calc_t*, calc_t*, const calc_t*,
                     const idx_t /* which k */, const calc_t /* contrib to this k */) = nullptr;
     const bool & scaled = par_A->scaled;
-    const calc_t * sqD_data = scaled ? par_A->sqrt_D->data : nullptr;
+    const calc_t * sqD_data = sqrt_D ? sqrt_D->data : nullptr;
     if (this->zero_guess) {
         kernel = scaled ? nullptr : AOS_forward_zero;
         kernel_irr = scaled ? nullptr : AOS_forward_zero_irr;
@@ -484,7 +505,7 @@ void PointGS<idx_t, data_t, calc_t>::AOS_ForwardPass(const par_structVector<idx_
                     const idx_t mat_off = j * slice_dki_size + i * slice_dk_size + kbeg * num_diag;
                     const idx_t vec_off = j * vec_ki_size    + i * vec_k_size    + kbeg;
                     const data_t * L_jik = L_data + mat_off, * U_jik = U_data + mat_off;
-                    const calc_t * sqD_jik = scaled ? (sqD_data + vec_off) : nullptr;
+                    const calc_t * sqD_jik = sqD_data ? (sqD_data + vec_off) : nullptr;
                     calc_t * x_jik = x_data + vec_off;
                     const calc_t * b_jik = b_data + vec_off;
                     // 线程边界处等待
@@ -522,7 +543,7 @@ void PointGS<idx_t, data_t, calc_t>::AOS_ForwardPass(const par_structVector<idx_
             const idx_t mat_off = j * slice_dki_size + i * slice_dk_size + kbeg * num_diag;
             const idx_t vec_off = j * vec_ki_size    + i * vec_k_size    + kbeg;
             const data_t * L_jik = L_data + mat_off, * U_jik = U_data + mat_off;
-            const calc_t * sqD_jik = scaled ? (sqD_data + vec_off) : nullptr;
+            const calc_t * sqD_jik = sqD_data ? (sqD_data + vec_off) : nullptr;
             calc_t * x_jik = x_data + vec_off;
             const calc_t * b_jik = b_data + vec_off;
             if (task_check) {
@@ -545,12 +566,12 @@ void PointGS<idx_t, data_t, calc_t>::AOS_ForwardPass(const par_structVector<idx_
     }
 }
 
-template<typename idx_t, typename data_t, typename calc_t>
-void PointGS<idx_t, data_t, calc_t>::AOS_BackwardPass(const par_structVector<idx_t, calc_t> & b, par_structVector<idx_t, calc_t> & x) const
+template<typename idx_t, typename data_t, typename setup_t, typename calc_t>
+void PointGS<idx_t, data_t, setup_t, calc_t>::AOS_BackwardPass(const par_structVector<idx_t, calc_t> & b, par_structVector<idx_t, calc_t> & x) const
 {
     const seq_structVector<idx_t, calc_t> & b_vec = *(b.local_vector);
           seq_structVector<idx_t, calc_t> & x_vec = *(x.local_vector);
-    const par_structMatrix<idx_t, calc_t, calc_t> * par_A = (par_structMatrix<idx_t, calc_t, calc_t> *)(this->oper);
+    const par_structMatrix<idx_t, setup_t, setup_t> * par_A = (par_structMatrix<idx_t, setup_t, setup_t> *)(this->oper);
     CHECK_LOCAL_HALO(x_vec, b_vec);
     assert(LU_separated);
 
@@ -573,7 +594,7 @@ void PointGS<idx_t, data_t, calc_t>::AOS_BackwardPass(const par_structVector<idx
                     const data_t*, const data_t*, const calc_t*, calc_t*, const calc_t*,
                     const idx_t /* which k */, const calc_t /* contrib to this k */) = nullptr;
     const bool & scaled = par_A->scaled;
-    const calc_t * sqD_data = scaled ? par_A->sqrt_D->data : nullptr;
+    const calc_t * sqD_data = sqrt_D ? sqrt_D->data : nullptr;
     if (this->zero_guess) {
         kernel = scaled ? nullptr : AOS_backward_zero;
         kernel_irr = scaled ? nullptr : AOS_backward_zero_irr;
@@ -627,7 +648,7 @@ void PointGS<idx_t, data_t, calc_t>::AOS_BackwardPass(const par_structVector<idx
                     const idx_t mat_off = j * slice_dki_size + i * slice_dk_size + (kend - 1) * num_diag;
                     const idx_t vec_off = j * vec_ki_size + i * vec_k_size + (kend - 1);
                     const data_t * L_jik = L_data + mat_off, * U_jik = U_data + mat_off;
-                    const calc_t * sqD_jik = scaled ? (sqD_data + vec_off) : nullptr;
+                    const calc_t * sqD_jik = sqD_data ? (sqD_data + vec_off) : nullptr;
                     calc_t * x_jik = x_data + vec_off;
                     const calc_t * b_jik = b_data + vec_off;
                     // 线程边界处等待
@@ -665,7 +686,7 @@ void PointGS<idx_t, data_t, calc_t>::AOS_BackwardPass(const par_structVector<idx
             const idx_t mat_off = j * slice_dki_size + i * slice_dk_size + (kend - 1) * num_diag;
             const idx_t vec_off = j * vec_ki_size + i * vec_k_size + (kend - 1);
             const data_t * L_jik = L_data + mat_off, * U_jik = U_data + mat_off;
-            const calc_t * sqD_jik = scaled ? (sqD_data + vec_off) : nullptr;
+            const calc_t * sqD_jik = sqD_data ? (sqD_data + vec_off) : nullptr;
             calc_t * x_jik = x_data + vec_off;
             const calc_t * b_jik = b_data + vec_off;
             if (task_check) {
@@ -711,17 +732,18 @@ void PointGS<idx_t, data_t, calc_t>::AOS_BackwardPass(const par_structVector<idx
     }
 }
 
-template<typename idx_t, typename data_t, typename calc_t>
-void PointGS<idx_t, data_t, calc_t>::separate_LU() {
+template<typename idx_t, typename data_t, typename setup_t, typename calc_t>
+void PointGS<idx_t, data_t, setup_t, calc_t>::separate_LU() {
     assert(this->oper != nullptr);
     assert(!LU_separated);
-    assert(sizeof(data_t) == sizeof(calc_t));
+    assert(sizeof(calc_t) == sizeof(data_t) && sizeof(calc_t) == sizeof(setup_t));
     // 提取矩阵对角元到向量，提取L和U到另一个矩阵
     assert(this->oper->input_dim[0] == this->oper->output_dim[0] &&
            this->oper->input_dim[1] == this->oper->output_dim[1] &&
            this->oper->input_dim[2] == this->oper->output_dim[2] );
 
-    const seq_structMatrix<idx_t, calc_t, calc_t> & mat = *(((par_structMatrix<idx_t, calc_t, calc_t> *) oper)->local_matrix);
+    const par_structMatrix<idx_t, setup_t, setup_t> & par_A = *((par_structMatrix<idx_t, setup_t, setup_t>*)this->oper);
+    const seq_structMatrix<idx_t, setup_t, setup_t> & mat = *(par_A.local_matrix);
     const idx_t diag_block_width = 1;
     assert((mat.num_diag - diag_block_width) % 2 ==0);
 
@@ -871,22 +893,34 @@ void PointGS<idx_t, data_t, calc_t>::separate_LU() {
         printf("PointGS::separate_LDU: num_diag of %d not yet supported\n", mat.num_diag);
         MPI_Abort(MPI_COMM_WORLD, -4000);
     }
+
+    if (par_A.scaled) {
+        const seq_structVector<idx_t, setup_t> & src_h = *(par_A.sqrt_D);
+        const idx_t hx = mat.halo_x , hy = mat.halo_y , hz = mat.halo_z ;
+        const idx_t lx = mat.local_x, ly = mat.local_y, lz = mat.local_z;
+        sqrt_D = new seq_structVector<idx_t, calc_t>(lx, ly, lz, hx, hy, hz);
+        const idx_t tot_elems = (lx + hx*2) * (ly + hy*2) * (lz + hz*2);
+        #pragma omp parallel for schedule(static)
+        for (idx_t i = 0; i < tot_elems; i++)
+            sqrt_D->data[i] = src_h.data[i];
+    }
+
     LU_separated = true;
 }
 
-template<typename idx_t, typename data_t, typename calc_t>
-void PointGS<idx_t, data_t, calc_t>::separate_Diags() {
+template<typename idx_t, typename data_t, typename setup_t, typename calc_t>
+void PointGS<idx_t, data_t, setup_t, calc_t>::separate_Diags() {
     assert(this->oper != nullptr);
     assert(!DiagGroups_separated);
     assert(sizeof(data_t) < sizeof(calc_t));
 
-    const par_structMatrix<idx_t, calc_t, calc_t> & par_A = *((par_structMatrix<idx_t, calc_t, calc_t> *)oper);
-    const seq_structMatrix<idx_t, calc_t, calc_t> & seq_A = *(par_A.local_matrix);
+    const par_structMatrix<idx_t, setup_t, setup_t> & par_A = *((par_structMatrix<idx_t, setup_t, setup_t> *)oper);
+    const seq_structMatrix<idx_t, setup_t, setup_t> & seq_A = *(par_A.local_matrix);
 
     int my_pid; MPI_Comm_rank(par_A.comm_pkg->cart_comm, &my_pid);
     if (my_pid == 0) {
-        printf("Warning: PGS::separate_diags() truncate calc_t of %ld to data_t of %ld bytes\n",
-            sizeof(calc_t), sizeof(data_t));
+        printf(" WARNING: PGS Setop truncate setup_t of %ld to data_t of %ld bytes\n", 
+            sizeof(setup_t), sizeof(data_t));
     }
 
     switch (seq_A.num_diag)
@@ -906,7 +940,7 @@ void PointGS<idx_t, data_t, calc_t>::separate_Diags() {
         DiagGroups[1] = new seq_structMatrix<idx_t, data_t, calc_t>(4, lx, ly, lz, hx, hy, hz);
         #pragma omp parallel for schedule(static)
         for (idx_t e = 0; e < tot_elems; e++) {
-            const calc_t * aos_ptrs = seq_A.data + e * seq_A.num_diag;
+            const setup_t * aos_ptrs = seq_A.data + e * seq_A.num_diag;
             data_t * L_ptr = DiagGroups[0]->data + e * DiagGroups[0]->num_diag;
             data_t * U_ptr = DiagGroups[1]->data + e * DiagGroups[1]->num_diag;
             L_ptr[0] = aos_ptrs[0]; L_ptr[1] = aos_ptrs[1]; L_ptr[2] = aos_ptrs[2]; L_ptr[3] = aos_ptrs[3];
@@ -921,7 +955,7 @@ void PointGS<idx_t, data_t, calc_t>::separate_Diags() {
         DiagGroups[4] = new seq_structMatrix<idx_t, data_t, calc_t>(4, lx, ly, lz, hx, hy, hz);
         #pragma omp parallel for schedule(static)
         for (idx_t e = 0; e < tot_elems; e++) {
-            const calc_t * aos_ptrs = seq_A.data + e * seq_A.num_diag;
+            const setup_t * aos_ptrs = seq_A.data + e * seq_A.num_diag;
             data_t * G0_ptr = DiagGroups[0]->data + e * DiagGroups[0]->num_diag;
             data_t * G1_ptr = DiagGroups[1]->data + e * DiagGroups[1]->num_diag;
             data_t * G2_ptr = DiagGroups[2]->data + e * DiagGroups[2]->num_diag;
@@ -943,7 +977,7 @@ void PointGS<idx_t, data_t, calc_t>::separate_Diags() {
         DiagGroups[6] = new seq_structMatrix<idx_t, data_t, calc_t>(4, lx, ly, lz, hx, hy, hz);
         #pragma omp parallel for schedule(static)
         for (idx_t e = 0; e < tot_elems; e++) {
-            const calc_t * aos_ptrs = seq_A.data + e * seq_A.num_diag;
+            const setup_t * aos_ptrs = seq_A.data + e * seq_A.num_diag;
             data_t * G0_ptr = DiagGroups[0]->data + e * DiagGroups[0]->num_diag;
             data_t * G1_ptr = DiagGroups[1]->data + e * DiagGroups[1]->num_diag;
             data_t * G2_ptr = DiagGroups[2]->data + e * DiagGroups[2]->num_diag;
@@ -960,15 +994,27 @@ void PointGS<idx_t, data_t, calc_t>::separate_Diags() {
             G6_ptr[0] = aos_ptrs[23]; G6_ptr[1] = aos_ptrs[24]; G6_ptr[2] = aos_ptrs[25]; G6_ptr[3] = aos_ptrs[26];
         }
     }
+    
+    if (par_A.scaled) {
+        const seq_structVector<idx_t, setup_t> & src_h = *(par_A.sqrt_D);
+        const idx_t hx = seq_A.halo_x , hy = seq_A.halo_y , hz = seq_A.halo_z ;
+        const idx_t lx = seq_A.local_x, ly = seq_A.local_y, lz = seq_A.local_z;
+        sqrt_D = new seq_structVector<idx_t, calc_t>(lx, ly, lz, hx, hy, hz);
+        const idx_t tot_elems = (lx + hx*2) * (ly + hy*2) * (lz + hz*2);
+        #pragma omp parallel for schedule(static)
+        for (idx_t i = 0; i < tot_elems; i++)
+            sqrt_D->data[i] = src_h.data[i];
+    }
+    
     DiagGroups_separated = true;
 }
 
-template<typename idx_t, typename data_t, typename calc_t>
-void PointGS<idx_t, data_t, calc_t>::SOA_ForwardPass(const par_structVector<idx_t, calc_t> & b, par_structVector<idx_t, calc_t> & x) const
+template<typename idx_t, typename data_t, typename setup_t, typename calc_t>
+void PointGS<idx_t, data_t, setup_t, calc_t>::SOA_ForwardPass(const par_structVector<idx_t, calc_t> & b, par_structVector<idx_t, calc_t> & x) const
 {
     const seq_structVector<idx_t, calc_t> & b_vec = *(b.local_vector);
           seq_structVector<idx_t, calc_t> & x_vec = *(x.local_vector);
-    const par_structMatrix<idx_t, calc_t, calc_t> * par_A = (par_structMatrix<idx_t, calc_t, calc_t>*)(this->oper);
+    const par_structMatrix<idx_t, setup_t, setup_t> * par_A = (par_structMatrix<idx_t, setup_t, setup_t>*)(this->oper);
     CHECK_LOCAL_HALO(x_vec, b_vec);
     assert(DiagGroups_separated);
     const calc_t * b_data = b_vec.data;
@@ -999,7 +1045,7 @@ void PointGS<idx_t, data_t, calc_t>::SOA_ForwardPass(const par_structVector<idx_
         num_arrs = DiagGroups_cnt;
     }
     const idx_t beg_arrId = 0;// 前扫时总是从第0个开始
-    const calc_t * sqD_data = scaled ? par_A->sqrt_D->data : nullptr;
+    const calc_t * sqD_data = sqrt_D ? sqrt_D->data : nullptr;
     assert(kernel);
     assert(kernel_irr);
 
@@ -1075,7 +1121,7 @@ void PointGS<idx_t, data_t, calc_t>::SOA_ForwardPass(const par_structVector<idx_
                         A_jik[id] = DiagGroups[gid]->data + j * DiagGroups[gid]->slice_dki_size
                             + i * DiagGroups[gid]->slice_dk_size + kbeg * DiagGroups[gid]->num_diag;
                     }
-                    const calc_t * sqD_jik = scaled ? (sqD_data + vec_off) : nullptr;
+                    const calc_t * sqD_jik = sqD_data ? (sqD_data + vec_off) : nullptr;
                     calc_t * x_jik = x_data + vec_off;
                     const calc_t * b_jik = b_data + vec_off;
                     // 线程边界处等待
@@ -1121,7 +1167,7 @@ void PointGS<idx_t, data_t, calc_t>::SOA_ForwardPass(const par_structVector<idx_
                 A_jik[id] = DiagGroups[gid]->data + j * DiagGroups[gid]->slice_dki_size
                     + i * DiagGroups[gid]->slice_dk_size + kbeg * DiagGroups[gid]->num_diag;
             }
-            const calc_t * sqD_jik = scaled ? (sqD_data + vec_off) : nullptr;
+            const calc_t * sqD_jik = sqD_data ? (sqD_data + vec_off) : nullptr;
             calc_t * x_jik = x_data + vec_off;
             const calc_t * b_jik = b_data + vec_off;
             if (task_check) {
@@ -1147,12 +1193,12 @@ void PointGS<idx_t, data_t, calc_t>::SOA_ForwardPass(const par_structVector<idx_
     }
 }
 
-template<typename idx_t, typename data_t, typename calc_t>
-void PointGS<idx_t, data_t, calc_t>::SOA_BackwardPass(const par_structVector<idx_t, calc_t> & b, par_structVector<idx_t, calc_t> & x) const
+template<typename idx_t, typename data_t, typename setup_t, typename calc_t>
+void PointGS<idx_t, data_t, setup_t, calc_t>::SOA_BackwardPass(const par_structVector<idx_t, calc_t> & b, par_structVector<idx_t, calc_t> & x) const
 {
     const seq_structVector<idx_t, calc_t> & b_vec = *(b.local_vector);
           seq_structVector<idx_t, calc_t> & x_vec = *(x.local_vector);
-    const par_structMatrix<idx_t, calc_t, calc_t> * par_A = (par_structMatrix<idx_t, calc_t, calc_t> *)(this->oper);
+    const par_structMatrix<idx_t, setup_t, setup_t> * par_A = (par_structMatrix<idx_t, setup_t, setup_t> *)(this->oper);
     CHECK_LOCAL_HALO(x_vec, b_vec);
     assert(DiagGroups_separated);
 
@@ -1185,7 +1231,7 @@ void PointGS<idx_t, data_t, calc_t>::SOA_BackwardPass(const par_structVector<idx
         num_arrs = DiagGroups_cnt;
         beg_arrId= 0;
     }
-    const calc_t * sqD_data = scaled ? par_A->sqrt_D->data : nullptr;
+    const calc_t * sqD_data = sqrt_D ? sqrt_D->data : nullptr;
     assert(kernel);
     assert(kernel_irr);
 
@@ -1237,7 +1283,7 @@ void PointGS<idx_t, data_t, calc_t>::SOA_BackwardPass(const par_structVector<idx
                         A_jik[id] = DiagGroups[gid]->data + j * DiagGroups[gid]->slice_dki_size
                             + i * DiagGroups[gid]->slice_dk_size + kend * DiagGroups[gid]->num_diag;
                     }
-                    const calc_t * sqD_jik = scaled ? (sqD_data + vec_off) : nullptr;
+                    const calc_t * sqD_jik = sqD_data ? (sqD_data + vec_off) : nullptr;
                     calc_t * x_jik = x_data + vec_off;
                     const calc_t * b_jik = b_data + vec_off;
                     // 线程边界处等待
@@ -1283,7 +1329,7 @@ void PointGS<idx_t, data_t, calc_t>::SOA_BackwardPass(const par_structVector<idx
                 A_jik[id] = DiagGroups[gid]->data + j * DiagGroups[gid]->slice_dki_size
                     + i * DiagGroups[gid]->slice_dk_size + kend * DiagGroups[gid]->num_diag;
             }
-            const calc_t * sqD_jik = scaled ? (sqD_data + vec_off) : nullptr;
+            const calc_t * sqD_jik = sqD_data ? (sqD_data + vec_off) : nullptr;
             calc_t * x_jik = x_data + vec_off;
             const calc_t * b_jik = b_data + vec_off;
             

@@ -4,8 +4,11 @@
 #ifndef KSP_BIT
 #define KSP_BIT 64
 #endif
-#ifndef PC_BIT
-#define PC_BIT 32
+#ifndef PC_DATA_BIT
+#define PC_DATA_BIT 16
+#endif
+#ifndef PC_CALC_BIT
+#define PC_CALC_BIT 32
 #endif
 
 #if KSP_BIT==80
@@ -19,18 +22,24 @@
 #define KSP_MPI_TYPE MPI_FLOAT
 #endif
 
-#if PC_BIT==80
-#define PC_TYPE long double 
-#define PC_MPI_TYPE MPI_LONG_DOUBLE
-#elif PC_BIT==64
-#define PC_TYPE double 
-#define PC_MPI_TYPE MPI_DOUBLE
-#elif PC_BIT==32
-#define PC_TYPE float
-#define PC_MPI_TYPE MPI_FLOAT
-#elif PC_BIT==16
-#define PC_TYPE __fp16
-#define PC_MPI_TYPE MPI_SHORT
+#if PC_DATA_BIT==80
+#define PC_DATA_TYPE long double 
+#elif PC_DATA_BIT==64
+#define PC_DATA_TYPE double 
+#elif PC_DATA_BIT==32
+#define PC_DATA_TYPE float
+#elif PC_DATA_BIT==16
+#define PC_DATA_TYPE __fp16
+#endif
+
+#if PC_CALC_BIT==80
+#define PC_CALC_TYPE long double 
+#elif PC_CALC_BIT==64
+#define PC_CALC_TYPE double 
+#elif PC_CALC_BIT==32
+#define PC_CALC_TYPE float
+#elif PC_CALC_BIT==16
+#define PC_CALC_TYPE __fp16
 #endif
 
 #define IDX_TYPE int

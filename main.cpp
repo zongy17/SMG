@@ -1,8 +1,8 @@
 #include "utils/par_struct_mat.hpp"
 #include "Solver_ls.hpp"
-#ifdef __aarch64__
-#include "adapator/Adaptor_64_for_32.hpp"
-#endif
+// #ifdef __aarch64__
+// #include "adapator/Adaptor_64_for_32.hpp"
+// #endif
 
 int main(int argc, char ** argv)
 {
@@ -38,8 +38,8 @@ int main(int argc, char ** argv)
         par_structVector<IDX_TYPE, KSP_TYPE> * x = nullptr, * b = nullptr, * y = nullptr;
         par_structMatrix<IDX_TYPE, KSP_TYPE, KSP_TYPE> * A = nullptr;
         std::string pathname;
-        IterativeSolver<IDX_TYPE, KSP_TYPE, PC_TYPE> * solver = nullptr;
-        Solver<IDX_TYPE, PC_TYPE, KSP_TYPE> * precond = nullptr;
+        IterativeSolver<IDX_TYPE, PC_DATA_TYPE, PC_CALC_TYPE, KSP_TYPE> * solver = nullptr;
+        Solver         <IDX_TYPE, PC_DATA_TYPE, KSP_TYPE, PC_CALC_TYPE> * precond = nullptr;
         std::string data_path = "/storage/hpcauser/zongyi/HUAWEI/SMG/data";
 
         b = new par_structVector<IDX_TYPE, KSP_TYPE          >
@@ -107,11 +107,6 @@ int main(int argc, char ** argv)
         x->write_CSR_bin(pathname, "x0.bin");
 #endif
 
-#if KSP_BIT==64 && PC_BIT==32 
-        precond = new Adaptor_64_for_32(argv + cnt, argc - cnt);
-#else
-        static_assert(  (KSP_BIT==64 && PC_BIT==64) || 
-                        (KSP_BIT==32              ) );
         std::string prc_name = "";
         if (argc >= 8)
             prc_name = std::string(argv[cnt++]);
@@ -121,7 +116,7 @@ int main(int argc, char ** argv)
             else if (strstr(prc_name.c_str(), "B")) type = BACKWARD;
             else if (strstr(prc_name.c_str(), "S")) type = SYMMETRIC;
             if (my_pid == 0) printf("  using \033[1;35mpointwise-GS %d\033[0m as preconditioner\n", type);
-            precond = new PointGS<IDX_TYPE, PC_TYPE, KSP_TYPE>(type);
+            precond = new PointGS<IDX_TYPE, PC_DATA_TYPE, KSP_TYPE, PC_CALC_TYPE>(type);
         } else if (prc_name == "GMG") {
             IDX_TYPE num_discrete = atoi(argv[cnt++]);
             IDX_TYPE num_Galerkin = atoi(argv[cnt++]);
@@ -131,29 +126,22 @@ int main(int argc, char ** argv)
             for (IDX_TYPE i = 0; i < num_discrete + num_Galerkin + 1; i++) {
                 rel_types.push_back(trans_smth[argv[cnt++]]);
             }
-            precond = new GeometricMultiGrid<IDX_TYPE, PC_TYPE, KSP_TYPE>
+            precond = new GeometricMultiGrid<IDX_TYPE, PC_DATA_TYPE, KSP_TYPE, PC_CALC_TYPE>
                 (num_discrete, num_Galerkin, {}, rel_types);
         } else {
             if (my_pid == 0) printf("NO preconditioner was set.\n");
         }
-#endif
 
-        if (its_name == "GCR") {
-            solver = new GCRSolver<IDX_TYPE, KSP_TYPE, PC_TYPE>;
-            ((GCRSolver<IDX_TYPE, KSP_TYPE, PC_TYPE>*)solver)->SetInnerIterMax(restart);
-        } else if (its_name == "CG") {
-            solver = new CGSolver<IDX_TYPE, KSP_TYPE, PC_TYPE>();
-        } else if (its_name == "GMRES") {
-            solver = new GMRESSolver<IDX_TYPE, KSP_TYPE, PC_TYPE>();
-            ((GMRESSolver<IDX_TYPE, KSP_TYPE, PC_TYPE>*)solver)->SetRestartlen(restart);
+        if (its_name == "GMRES") {
+            solver = new GMRESSolver<IDX_TYPE, PC_DATA_TYPE, PC_CALC_TYPE, KSP_TYPE>();
+            ((GMRESSolver<IDX_TYPE, PC_DATA_TYPE, PC_CALC_TYPE, KSP_TYPE>*)solver)->SetRestartlen(restart);
         } else {
             if (my_pid == 0) printf("INVALID iterative solver name of %s\nOnly GCR, CG, GMRES, FGMRES available\n", its_name.c_str());
             MPI_Abort(MPI_COMM_WORLD, -1);
         }
 
         solver->SetMaxIter(200);
-        if (its_name == "GCR") solver->SetRelTol(1e-14);// 注意：这一版的GCR里用的是点积结果（不开根）判敛，实际是范数的平方
-            else solver->SetRelTol(1e-7);
+        solver->SetRelTol(1e-7);
         if (precond != nullptr) solver->SetPreconditioner(*precond);
         solver->SetOperator(*A);
         

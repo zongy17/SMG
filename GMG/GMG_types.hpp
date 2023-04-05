@@ -6,8 +6,6 @@
 // possible smoother
 // #include "../precond/point_Jacobi.hpp"
 #include "../precond/point_GS.hpp"
-#include "../precond/line_GS.hpp"
-#include "../precond/block_ILU.hpp"
 
 
 typedef enum {STANDARD, SEMI_XY} COARSEN_TYPE;

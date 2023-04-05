@@ -57,9 +57,9 @@ void XY_semi_coarsen(const par_structVector<idx_t, data_t> & fine_vec, const boo
             coar_to_fine.fine_base_idx[0], coar_to_fine.fine_base_idx[1], coar_to_fine.fine_base_idx[2]);
 }
 
-template<typename idx_t, typename data_t>
-par_structMatrix<idx_t, data_t, data_t> * Galerkin_RAP_3d(const Restrictor<idx_t, data_t> & rstr, 
-    const par_structMatrix<idx_t, data_t, data_t> & fine_mat, const Interpolator<idx_t, data_t> & prlg, const COAR_TO_FINE_INFO<idx_t> & info)
+template<typename idx_t, typename data_t, typename calc_t>
+par_structMatrix<idx_t, data_t, data_t> * Galerkin_RAP_3d(const Restrictor<idx_t, calc_t> & rstr, 
+    const par_structMatrix<idx_t, data_t, data_t> & fine_mat, const Interpolator<idx_t, calc_t> & prlg, const COAR_TO_FINE_INFO<idx_t> & info)
 {
     assert( info.stride[0] == info.stride[1] && info.stride[0] == 2);
     assert( info.fine_base_idx[0] == info.fine_base_idx[1] && 

@@ -27,9 +27,9 @@ public:
 
 // 虚基类Solver，继承自虚基类Operator
 // 需要子类重写SetOperator()和Mult()，如有必要还需重写析构函数
-// data_t是数据存储的精度，calc_t是算子作用时的精度（对应向量的精度）
-// 一般 data_t <= calc_t
-template<typename idx_t, typename data_t, typename calc_t>
+// data_t是数据存储的精度，setup_t是建立算子时的精度，calc_t是算子作用时的精度（对应向量的精度）
+// 一般 data_t <= calc_t，以及data_t <= setup_t
+template<typename idx_t, typename data_t, typename setup_t, typename calc_t>
 class Solver : public Operator<idx_t, data_t, calc_t> {
 public:
     mutable bool zero_guess = false;// 初始解是否为0
@@ -39,7 +39,7 @@ public:
 
     Solver(idx_t in0, idx_t in1, idx_t in2, idx_t out0, idx_t out1, idx_t out2, bool use_zero_guess = false) :
         Operator<idx_t, data_t, calc_t>(in0, in1, in2, out0, out1, out2) {zero_guess = use_zero_guess; }
-    virtual void SetOperator(const Operator<idx_t, calc_t, calc_t> & op) = 0;
+    virtual void SetOperator(const Operator<idx_t, setup_t, setup_t> & op) = 0;
     virtual void SetRelaxWeight(data_t wt) {weight = wt;}
 };
 

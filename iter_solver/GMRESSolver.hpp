@@ -4,8 +4,8 @@
 #include "iter_solver.hpp"
 #include "../utils/par_struct_mat.hpp"
 
-template<typename idx_t, typename ksp_t, typename pc_t>
-class GMRESSolver : public IterativeSolver<idx_t, ksp_t, pc_t> {
+template<typename idx_t, typename pc_data_t, typename pc_calc_t, typename ksp_t>
+class GMRESSolver : public IterativeSolver<idx_t, pc_data_t, pc_calc_t, ksp_t> {
 public:
     int restart_len = 10;
 
@@ -15,8 +15,8 @@ public:
 };
 
 // 抄的hypre的GMRES，比较麻烦，精简了一点
-template<typename idx_t, typename ksp_t, typename pc_t>
-void GMRESSolver<idx_t, ksp_t, pc_t>::Mult(const par_structVector<idx_t, ksp_t> & b, par_structVector<idx_t, ksp_t> & x) const 
+template<typename idx_t, typename pc_data_t, typename pc_calc_t, typename ksp_t>
+void GMRESSolver<idx_t, pc_data_t, pc_calc_t, ksp_t>::Mult(const par_structVector<idx_t, ksp_t> & b, par_structVector<idx_t, ksp_t> & x) const 
 {
     assert(this->oper != nullptr);
     CHECK_INPUT_DIM(*this, x);
@@ -48,6 +48,31 @@ void GMRESSolver<idx_t, ksp_t, pc_t>::Mult(const par_structVector<idx_t, ksp_t> 
         alloc.construct(p + i, x);
         p[i].set_halo(0.0);
     }
+#if KSP_BIT!=PC_CALC_BIT
+    par_structVector<idx_t, pc_calc_t> * pc_buf_b = nullptr, * pc_buf_x = nullptr;
+    const idx_t num_diag = ((const par_structMatrix<idx_t, ksp_t, ksp_t>*)this->oper)->num_diag;
+    pc_buf_b = new par_structVector<idx_t, pc_calc_t>(r.comm_pkg->cart_comm,
+        r.global_size_x, r.global_size_y, r.global_size_z,
+        r.global_size_x/r.local_vector->local_x,
+        r.global_size_y/r.local_vector->local_y,
+        r.global_size_z/r.local_vector->local_z, num_diag != 7);
+    // 需要把非规则点也一起初始化了
+    if (b.num_irrgPts > 0) {
+        pc_buf_b->num_irrgPts = b.num_irrgPts;
+        pc_buf_b->irrgPts = new irrgPts_vec<idx_t, pc_calc_t> [b.num_irrgPts];
+        for (idx_t ir = 0; ir < b.num_irrgPts; ir++)
+            pc_buf_b->irrgPts[ir].gid = b.irrgPts[ir].gid;// 必须要初始化非规则点的序号
+    }
+    pc_buf_x = new par_structVector<idx_t, pc_calc_t>(*pc_buf_b);
+    pc_buf_b->set_halo(0.0);
+    pc_buf_x->set_halo(0.0);
+    
+    const idx_t jbeg = r.local_vector->halo_y, jend = jbeg + r.local_vector->local_y,
+                ibeg = r.local_vector->halo_x, iend = ibeg + r.local_vector->local_x,
+                kbeg = r.local_vector->halo_z, kend = kbeg + r.local_vector->local_z;
+    const idx_t col_height = kend - kbeg;
+    const idx_t vec_ki_size = r.local_vector->slice_ki_size, vec_k_size = r.local_vector->slice_k_size;
+#endif
 
     // compute initial residual
     record[OPER] -= wall_time();
@@ -135,12 +160,60 @@ void GMRESSolver<idx_t, ksp_t, pc_t>::Mult(const par_structVector<idx_t, ksp_t> 
             iter++;
 
             if (this->prec) {
-                record[AXPY] -= wall_time();
+#if KSP_BIT!=PC_CALC_BIT
+                {// copy in
+                    const seq_structVector<idx_t, ksp_t> & src = *(p[i-1].local_vector);
+                    seq_structVector<idx_t, pc_calc_t> & dst = *(pc_buf_b->local_vector);
+                    CHECK_LOCAL_HALO(src, dst);
+                    #pragma omp parallel for collapse(2) schedule(static)
+                    for (idx_t j = jbeg; j < jend; j++)
+                    for (idx_t i = ibeg; i < iend; i++) {
+                        const double* src_ptr = src.data + j * vec_ki_size + i * vec_k_size + kbeg;
+                        float       * dst_ptr = dst.data + j * vec_ki_size + i * vec_k_size + kbeg;
+                        const idx_t tot_len = col_height;
+                        for (idx_t k = 0; k < tot_len; k++)
+                            dst_ptr[k] = src_ptr[k];
+                    }
+                    // 以及非规则点
+                    assert(pc_buf_b->num_irrgPts == p[i-1].num_irrgPts);
+                    const idx_t num_irr = p[i-1].num_irrgPts;
+                    for (idx_t ir = 0; ir < num_irr; ir++) {
+                        assert(pc_buf_b->irrgPts[ir].gid == p[i-1].irrgPts[ir].gid);
+                        pc_buf_b->irrgPts[ir].val = p[i-1].irrgPts[ir].val;
+                    }
+                }
+                
+                pc_buf_x->set_val(0.0);
+                record[PREC] -= wall_time();
+                this->prec->Mult(*pc_buf_b, *pc_buf_x, true);
+                record[PREC] += wall_time();
+                {// copy out
+                    const seq_structVector<idx_t, pc_calc_t> & src = *(pc_buf_x->local_vector);
+                    seq_structVector<idx_t, ksp_t> & dst = *(r.local_vector);
+                    CHECK_LOCAL_HALO(src, dst);
+                    #pragma omp parallel for collapse(2) schedule(static)
+                    for (idx_t j = jbeg; j < jend; j++)
+                    for (idx_t i = ibeg; i < iend; i++) {
+                        const float* src_ptr = src.data + j * vec_ki_size + i * vec_k_size + kbeg;
+                        double     * dst_ptr = dst.data + j * vec_ki_size + i * vec_k_size + kbeg;
+                        const idx_t tot_len = col_height;
+                        for (idx_t k = 0; k < tot_len; k++)
+                            dst_ptr[k] = src_ptr[k];
+                    }
+                    // 以及非规则点
+                    assert(pc_buf_x->num_irrgPts == r.num_irrgPts);
+                    const idx_t num_irr = r.num_irrgPts;
+                    for (idx_t ir = 0; ir < num_irr; ir++) {
+                        assert(pc_buf_x->irrgPts[ir].gid == r.irrgPts[ir].gid);
+                        r.irrgPts[ir].val = pc_buf_x->irrgPts[ir].val;
+                    }
+                }
+#else
                 r.set_val(0.0);
-                record[AXPY] += wall_time();
                 record[PREC] -= wall_time();
                 this->prec->Mult(p[i-1], r, true);
                 record[PREC] += wall_time();
+#endif
             }
             else {
                 record[AXPY] -= wall_time();
@@ -214,12 +287,58 @@ void GMRESSolver<idx_t, ksp_t, pc_t>::Mult(const par_structVector<idx_t, ksp_t> 
             vec_add(w, rs[j], p[j], w);
         record[AXPY] += wall_time();
         if (this->prec) {
-            record[AXPY] -= wall_time();
+#if KSP_BIT!=PC_CALC_BIT
+            {// copy in
+                const seq_structVector<idx_t, ksp_t> & src = *(w.local_vector);
+                seq_structVector<idx_t, pc_calc_t> & dst = *(pc_buf_b->local_vector);
+                CHECK_LOCAL_HALO(src, dst);
+                #pragma omp parallel for collapse(2) schedule(static)
+                for (idx_t j = jbeg; j < jend; j++)
+                for (idx_t i = ibeg; i < iend; i++) {
+                    const double* src_ptr = src.data + j * vec_ki_size + i * vec_k_size + kbeg;
+                    float       * dst_ptr = dst.data + j * vec_ki_size + i * vec_k_size + kbeg;
+                    const idx_t tot_len = col_height;
+                    for (idx_t k = 0; k < tot_len; k++)
+                        dst_ptr[k] = src_ptr[k];
+                }
+                // 以及非规则点
+                const idx_t num_irr = w.num_irrgPts;
+                for (idx_t ir = 0; ir < num_irr; ir++) {
+                    assert(pc_buf_b->irrgPts[ir].gid == w.irrgPts[ir].gid);
+                    pc_buf_b->irrgPts[ir].val =  w.irrgPts[ir].val;
+                }
+            }
+            pc_buf_x->set_val(0.0);
+            record[PREC] -= wall_time();
+            this->prec->Mult(*pc_buf_b, *pc_buf_x, true);
+            record[PREC] += wall_time();
+            {// copy out
+                const seq_structVector<idx_t, pc_calc_t> & src = *(pc_buf_x->local_vector);
+                seq_structVector<idx_t, ksp_t> & dst = *(r.local_vector);
+                CHECK_LOCAL_HALO(src, dst);
+                #pragma omp parallel for collapse(2) schedule(static)
+                for (idx_t j = jbeg; j < jend; j++)
+                for (idx_t i = ibeg; i < iend; i++) {
+                    const float* src_ptr = src.data + j * vec_ki_size + i * vec_k_size + kbeg;
+                    double     * dst_ptr = dst.data + j * vec_ki_size + i * vec_k_size + kbeg;
+                    const idx_t tot_len = col_height;
+                    for (idx_t k = 0; k < tot_len; k++)
+                        dst_ptr[k] = src_ptr[k];
+                }
+                // 以及非规则点
+                assert(pc_buf_x->num_irrgPts == r.num_irrgPts);
+                const idx_t num_irr = r.num_irrgPts;
+                for (idx_t ir = 0; ir < num_irr; ir++) {
+                    assert(pc_buf_x->irrgPts[ir].gid == r.irrgPts[ir].gid);
+                    r.irrgPts[ir].val = pc_buf_x->irrgPts[ir].val;
+                }
+            }
+#else
             r.set_val(0.0);
-            record[AXPY] += wall_time();
             record[PREC] -= wall_time();
             this->prec->Mult(w, r, true);
             record[PREC] += wall_time();
+#endif
         }
         else {
             record[AXPY] -= wall_time();
