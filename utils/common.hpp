@@ -78,6 +78,104 @@ bool check_power2(T num) {
     return true;
 }
 
+typedef enum {HALO, ALL, SPMV, SPTRSV, VEC, NUM_PROFILE} PROFILE_ITEMS;
+double profile[NUM_PROFILE];
+
+#include <limits.h>
+#include <unistd.h>
+#include <sched.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+#include <libgen.h>
+
+__thread char _affinity_buffer[256];
+const char *get_affinity() {
+    int ncores = (int)sysconf(_SC_NPROCESSORS_ONLN);
+    if ((int)ncores > (int)sizeof(_affinity_buffer))
+        return NULL;
+
+    cpu_set_t cpu_set;
+    if (sched_getaffinity(0, sizeof(cpu_set_t), &cpu_set) == -1)
+        return NULL;
+
+    for (int i = 0; i < ncores; i++) {
+        _affinity_buffer[i] = CPU_ISSET(i, &cpu_set) ? '1' : '0';
+}
+    _affinity_buffer[ncores] = '\0';
+    return _affinity_buffer;
+}
+
+void print_affinity(FILE *fd)
+{
+    int myrank, nranks;
+    MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
+    MPI_Comm_size(MPI_COMM_WORLD, &nranks);
+    for (int rank = 0; rank < nranks; rank++) {
+#ifdef _OPENMP
+        #pragma omp parallel
+#endif
+        if (myrank == rank) {
+#ifdef _OPENMP
+            int nthreads = omp_get_num_threads();
+            int thread_id = omp_get_thread_num();
+            #pragma omp for ordered schedule(static,1)
+#else
+            int nthreads = 1;
+            int thread_id = 0;
+#endif
+            for (int t = 0; t < nthreads; t++) {
+#ifdef _OPENMP
+                #pragma omp ordered
+#endif
+                {
+                    int rank_digits = trunc(log10(nranks)) + 1;
+                    int thread_digits = trunc(log10(nthreads)) + 1;
+                    rank_digits = rank_digits > 3 ? rank_digits : 3;
+                    thread_digits = thread_digits > 1 ? thread_digits : 1;
+                    const char *affinity = get_affinity();
+                    fprintf(fd, "rank=%0*d:%0*d affinity=%s\n", rank_digits, myrank, thread_digits, thread_id, affinity);
+                    fflush(fd);
+                }
+            }
+        }
+        MPI_Barrier(MPI_COMM_WORLD);
+    }
+}
+
+void stick_affinity()
+{
+    int myrank, nranks;
+    MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
+    MPI_Comm_size(MPI_COMM_WORLD, &nranks);
+#ifdef _OPENMP
+    #pragma omp parallel
+#endif
+    {
+#ifdef _OPENMP
+        int thread_id = omp_get_thread_num();
+#else
+        int thread_id = 0;
+#endif
+        const char *affinity = get_affinity();
+        int len = strnlen(affinity, INT_MAX);
+        int count = 0;
+        for (int i = 0; i < len; i++) {
+            if (affinity[i] == '0')
+                continue;
+            if (count == thread_id) {
+                cpu_set_t cpu_set;
+                CPU_ZERO(&cpu_set);
+                CPU_SET(i, &cpu_set);
+                sched_setaffinity(0, sizeof(cpu_set_t), &cpu_set);
+                break;
+            }
+            count += 1;
+        }
+    }
+}
+
 const IDX_TYPE stencil_offset_3d27[27 * 3] = {
     // y , x , z
     -1, -1, -1,

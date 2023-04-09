@@ -217,9 +217,11 @@ void par_structVector<idx_t, data_t>::update_halo() const
         local_vector->print_level(1);
     }
 #endif
+    profile[HALO] -= wall_time();
 
     comm_pkg->exec_comm(local_vector->data);
 
+    profile[HALO] += wall_time();
 #ifdef DEBUG
     if (my_pid == 1) {
         local_vector->print_level(1);
@@ -425,13 +427,17 @@ res_t vec_dot(par_structVector<idx_t, data_t> const & x, par_structVector<idx_t,
         x.local_vector->halo_x, x.local_vector->halo_y, x.local_vector->halo_z,
         x.local_vector->local_x, x.local_vector->local_y, x.local_vector->local_z, loc_prod);
 #endif
-
+#ifdef PROFILE
+    profile[ALL] -= wall_time();
+#endif
     // 这里不能用x.comm_pkg->mpi_scalar_type，因为点积希望向上保留精度
     if (sizeof(res_t) == 8)
         MPI_Allreduce(&loc_prod, &glb_prod, 1, MPI_DOUBLE, MPI_SUM, x.comm_pkg->cart_comm);
     else 
         MPI_Allreduce(&loc_prod, &glb_prod, 1, MPI_FLOAT , MPI_SUM, x.comm_pkg->cart_comm);
-    
+#ifdef PROFILE
+    profile[ALL] += wall_time();
+#endif
     return glb_prod;
 }
 

@@ -255,12 +255,14 @@ void PointGS<idx_t, data_t, setup_t, calc_t>::Mult(const par_structVector<idx_t,
             MPI_Barrier(MPI_COMM_WORLD);
             t = wall_time();
             for (int te = 0; te < test_cnt; te++) {
+                profile[SPTRSV] -= wall_time();
 #endif
             if constexpr (sizeof(data_t) == sizeof(calc_t))
                 AOS_ForwardPass(b, x);
             else
                 SOA_ForwardPass(b, x);
 #ifdef PROFILE
+                profile[SPTRSV] += wall_time();
             }
             t = wall_time() - t; t /= test_cnt;
             MPI_Allreduce(&t, &maxt, 1, MPI_DOUBLE, MPI_MAX, b.comm_pkg->cart_comm);
@@ -292,12 +294,14 @@ void PointGS<idx_t, data_t, setup_t, calc_t>::Mult(const par_structVector<idx_t,
             MPI_Barrier(MPI_COMM_WORLD);
             t = wall_time();
             for (int te = 0; te < test_cnt; te++) {
+                profile[SPTRSV] -= wall_time();
 #endif
             if constexpr (sizeof(data_t) == sizeof(calc_t))    
                 AOS_BackwardPass(b, x);
             else
                 SOA_BackwardPass(b, x);
 #ifdef PROFILE
+                profile[SPTRSV] += wall_time();
             }
             t = wall_time() - t; t /= test_cnt;
             MPI_Allreduce(&t, &maxt, 1, MPI_DOUBLE, MPI_MAX, b.comm_pkg->cart_comm);

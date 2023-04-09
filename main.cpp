@@ -5,6 +5,7 @@
 int main(int argc, char ** argv)
 {
     MPI_Init(&argc, &argv);
+    stick_affinity();
 
     int num_procs, my_pid;
     MPI_Comm_size(MPI_COMM_WORLD, &num_procs);
@@ -164,7 +165,7 @@ int main(int argc, char ** argv)
         fine_dot = vec_dot<IDX_TYPE, KSP_TYPE, double>(*y, *y);
         if (my_pid == 0) printf(" (Ab, Ab) = %.27e\n", fine_dot);
 
-#ifdef PROFILE
+#ifdef MIX_DEBUG
         {
             A->scale(10.0);
             par_structMatrix<IDX_TYPE, PC_TYPE, KSP_TYPE> A_low
@@ -527,7 +528,7 @@ int main(int argc, char ** argv)
         t1 = wall_time() - t1;
         if (my_pid == 0) printf("Solve costs %.6f s\n", t1);
         // x->write_data(pathname, "array_x_exact." + std::to_string(solver->final_iter));
-        double min_times[NUM_KRYLOV_RECORD], max_times[NUM_KRYLOV_RECORD], avg_times[NUM_KRYLOV_RECORD];
+        double min_times[10], max_times[10], avg_times[10];
         MPI_Allreduce(solver->part_times, min_times, NUM_KRYLOV_RECORD, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
         MPI_Allreduce(solver->part_times, max_times, NUM_KRYLOV_RECORD, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
         MPI_Allreduce(solver->part_times, avg_times, NUM_KRYLOV_RECORD, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD); 
@@ -539,7 +540,19 @@ int main(int argc, char ** argv)
             printf("axpy time min/avg/max %.3e %.3e %.3e\n", min_times[AXPY], avg_times[AXPY], max_times[AXPY]);
             printf("dot  tune min/avg/max %.3e %.3e %.3e\n", min_times[DOT ], avg_times[DOT ], max_times[DOT ]);
         }
-
+#ifdef PROFILE
+        MPI_Allreduce(profile, min_times, NUM_PROFILE, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+        MPI_Allreduce(profile, max_times, NUM_PROFILE, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        MPI_Allreduce(profile, avg_times, NUM_PROFILE, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD); 
+        for (int i = 0; i < NUM_PROFILE; i++)
+            avg_times[i] /= num_procs;
+        if (my_pid == 0) {
+            printf("updata halo time min/avg/max %.3e %.3e %.3e\n", min_times[HALO], avg_times[HALO], max_times[HALO]);
+            printf("allreduce   time min/avg/max %.3e %.3e %.3e\n", min_times[ALL ], avg_times[ALL ], max_times[ALL ]);
+            printf("spmv calc   time min/avg/max %.3e %.3e %.3e\n", min_times[SPMV], avg_times[SPMV], max_times[SPMV]);
+            printf("sptrsv calc time min/avg/max %.3e %.3e %.3e\n", min_times[SPTRSV], avg_times[SPTRSV], max_times[SPTRSV]);
+        }
+#endif
         A->Mult(*x, *y, false);
         vec_add(*b, -1.0, *y, *y);
         double true_r_norm = vec_dot<IDX_TYPE, KSP_TYPE, double>(*y, *y);

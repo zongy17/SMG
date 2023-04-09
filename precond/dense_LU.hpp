@@ -3,7 +3,7 @@
 
 #include "../utils/par_struct_mat.hpp"
 #include "../utils/LU.hpp"
-#define USE_DENSE
+// #define USE_DENSE
 #ifndef USE_DENSE
 #ifdef __x86_64__
 #include "mkl_types.h"
@@ -173,8 +173,9 @@ public:
         iparm[17] = -1;// Output: Number of nonzeros in the factor LU
         iparm[18] = -1;// Output: Mflops for LU factorization
         iparm[19] = 0;// Output: Numbers of CG Iterations
+        iparm[27] = sizeof(data_t) == 4 ? 1 : 0;// 0 for double, 1 for float
         iparm[34] = 1;// PARDISO use C-style indexing for ia and ja arrays */
-        maxfct = 1;// Maximum number of numerical factorizations. */
+        maxfct = 20;// Maximum number of numerical factorizations. */
         mnum = 1;// Which factorization to use.
         msglvl = 0;// Print statistical information in file */
         error = 0;// Initialize error flag
@@ -188,19 +189,29 @@ public:
             MPI_Abort(MPI_COMM_WORLD, -20230113);
         }
 
-        // 只记录数值分解的时间
-        t -= wall_time();
         phase = 22;
-        for (int i = 0; i < maxfct; i++)
-        PARDISO (pt, &maxfct, &mnum, &mtype, &phase,
-             &nrows, vals, row_ptr, col_idx, &idum, &nrhs, iparm, &msglvl, &ddum, &ddum, &error);
+        const int warm_cnt = 3, test_cnt = 10;// 注意别超过maxfct
+        for (int i = 0; i < warm_cnt; i++) {
+            PARDISO (pt, &maxfct, &mnum, &mtype, &phase,
+                &nrows, vals, row_ptr, col_idx, &idum, &nrhs, iparm, &msglvl, &ddum, &ddum, &error);
+        }
+        // 只记录数值分解的时间
+        int my_pid; MPI_Comm_rank(MPI_COMM_WORLD, &my_pid);
+        t -= wall_time();
+        for (int i = 0; i < test_cnt; i++) {
+            PARDISO (pt, &maxfct, &mnum, &mtype, &phase,
+                &nrows, vals, row_ptr, col_idx, &idum, &nrhs, iparm, &msglvl, &ddum, &ddum, &error);
+        }
+        t += wall_time();
         if (error != 0 ) {
             printf ("\nERROR during numerical factorization: %d", error);
             MPI_Abort(MPI_COMM_WORLD, -20230113);
         }
-        t += wall_time();
         b_buf = new res_t [nrows];
-        return t / maxfct;
+        if (my_pid == 0) {
+            printf("fact all %.4f once %.5f s\n", t, t / test_cnt);
+        }
+        return t / test_cnt;
 #endif
     }
     void apply(const res_t * b, res_t * x) {

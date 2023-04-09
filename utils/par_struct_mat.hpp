@@ -362,6 +362,7 @@ void par_structMatrix<idx_t, data_t, calc_t>::Mult(const par_structVector<idx_t,
     double t = wall_time();
     int test_cnt = 20;
     for (int te = 0; te < test_cnt; te++) {
+        profile[SPMV] -= wall_time();
 #endif
     // do computation
     if constexpr (sizeof(data_t) != sizeof(calc_t))
@@ -369,6 +370,7 @@ void par_structMatrix<idx_t, data_t, calc_t>::Mult(const par_structVector<idx_t,
     else
         AOS_Mult(*(x.local_vector), *(y.local_vector));
 #ifdef PROFILE
+        profile[SPMV] += wall_time();
     }
     t = wall_time() - t;
     t /= test_cnt;
