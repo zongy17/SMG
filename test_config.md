@@ -1,5 +1,7 @@
 For all cases, case_name = "OIL" and other_param = "GMRES 10 GMG 0 2 PGS PGS PGS", while cx, cy, cz, and px, py, pz are shown below specifically.
 
+executable = "smg_All64.exe" and "smg_K64P32D16.exe" on ARM-based platform, while only "smg_All64.exe" on X86 platform.
+
 # Case: size of 640x64x768
 
 cx = 640, cy = 64, cz = 768
