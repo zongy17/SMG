@@ -1,5 +1,7 @@
 For all cases, case_name = "GRAPES" and other_param = "GMRES 10 GMG 2 0 LGS LGS LGS", while cx, cy, cz, and px, py, pz are shown below specifically.
 
+executable = "smg_All32.exe" and "smg_K32P16.exe" on ARM-based platform, while only "smg_All32.exe" on X86 platform.
+
 # Case 1: size of 3840x2304x72
 
 cx = 3840, cy = 2304, cz = 72
