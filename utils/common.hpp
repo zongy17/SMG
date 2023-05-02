@@ -54,6 +54,7 @@
 #include <unordered_map>
 
 enum NEIGHBOR_ID {I_L, I_U, J_L, J_U, K_L, K_U, NUM_NEIGHBORS};
+typedef enum {NNZ_2d9=9, NNZ_3d7=7, NNZ_3d15=15, NNZ_3d19=19, NNZ_3d27=27} NNZ_PATTERN;
 typedef enum {VERT} LINE_DIRECTION;
 typedef enum {XZ} PLANE_DIRECTION;
 
@@ -102,10 +103,6 @@ const IDX_TYPE stencil_offset_3d27[27 * 3] = {
     1,  1,  1
 };
 
-const IDX_TYPE map_storage_to_memory_diag[19] = {
- // 0  1   2  3   4   5  6  7  8   9 10  11 12  13  14 15  16 17  18 
-    9, 6, 12, 2, 16, 18, 4, 0, 14, 8, 5, 11, 1, 15, 10, 7, 13, 3, 17
-};
 const IDX_TYPE stencil_offset_3d19[19 * 3] = {
     // y , x , z 从外到内维
     -1, -1,  0,// 0

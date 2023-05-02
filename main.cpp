@@ -1,8 +1,5 @@
 #include "utils/par_struct_mat.hpp"
 #include "Solver_ls.hpp"
-#ifdef __aarch64__
-#include "adapator/Adaptor_64_for_32.hpp"
-#endif
 
 int main(int argc, char ** argv)
 {
@@ -150,7 +147,23 @@ int main(int argc, char ** argv)
             // vec_scale(1.001, *b);
         } else {
             b->read_data(pathname, "array_b");
-            // if (strcmp(case_name.c_str(), "GRAPES" ) == 0) x->read_data(pathname, "array_x");
+            // {
+            //     int ck_len = (b->local_vector->local_x + 2 * b->local_vector->halo_x)
+            //                 *(b->local_vector->local_y + 2 * b->local_vector->halo_y)
+            //                 *(b->local_vector->local_z + 2 * b->local_vector->halo_z);
+            //     FILE * fp = fopen(("B.p"+std::to_string(my_pid)).c_str(), "w+");
+            //     for (int i = 0; i < ck_len; i++) fprintf(fp, "%d %.10e\n", i, b->local_vector->data[i]);
+            //     fclose(fp);
+            // }
+            if (strcmp(case_name.c_str(), "GRAPES" ) == 0) x->read_data(pathname, "array_x");
+            // {
+            //     int ck_len = (x->local_vector->local_x + 2 * x->local_vector->halo_x)
+            //                 *(x->local_vector->local_y + 2 * x->local_vector->halo_y)
+            //                 *(x->local_vector->local_z + 2 * x->local_vector->halo_z);
+            //     FILE * fp = fopen(("X.p"+std::to_string(my_pid)).c_str(), "w+");
+            //     for (int i = 0; i < ck_len; i++) fprintf(fp, "%d %.10e\n", i, x->local_vector->data[i]);
+            //     fclose(fp);
+            // }
             A->read_data(pathname);
         }
 
@@ -159,7 +172,13 @@ int main(int argc, char ** argv)
         fine_dot = vec_dot<IDX_TYPE, KSP_TYPE, double>(*x, *x);
         if (my_pid == 0) printf(" (x , x ) = %.27e\n", fine_dot);
 
+#ifndef CROSS_POLAR
         assert(A->check_Dirichlet());
+#endif
+        A->Mult(*x, *y, false);
+        fine_dot = vec_dot<IDX_TYPE, KSP_TYPE, double>(*y, *y);
+        if (my_pid == 0) printf(" (Ax, Ax) = %.27e\n", fine_dot);
+
         A->Mult(*b, *y, false);
 
         fine_dot = vec_dot<IDX_TYPE, KSP_TYPE, double>(*y, *y);
@@ -218,24 +237,8 @@ int main(int argc, char ** argv)
             if (my_pid == 0) printf("  using \033[1;35mlinewise-GS %d\033[0m as preconditioner\n", type);
             precond = new LineGS<IDX_TYPE, PC_TYPE, KSP_TYPE>(type, VERT, x->comm_pkg);
         } else if (prc_name == "GMG") {
-            IDX_TYPE num_discrete = atoi(argv[cnt++]);
-            IDX_TYPE num_Galerkin = atoi(argv[cnt++]);
-            std::unordered_map<std::string, RELAX_TYPE> trans_smth;
-            trans_smth["PGS"]= PGS;
-            trans_smth["LGS"]= LGS;
-            trans_smth["BILU3d7"] = BILU3d7;
-            trans_smth["BILU3d15"] = BILU3d15;
-            trans_smth["BILU3d19"] = BILU3d19;
-            trans_smth["BILU3d27"] = BILU3d27;
-            trans_smth["PILU"] = PILU;
-            trans_smth["LU"] = GaussElim;
-            std::vector<RELAX_TYPE> rel_types;
-            for (IDX_TYPE i = 0; i < num_discrete + num_Galerkin + 1; i++) {
-                rel_types.push_back(trans_smth[argv[cnt++]]);
-                // if (my_pid == 0) printf("i %d type %d\n", i, rel_types[i]);
-            }
-            precond = new GeometricMultiGrid<IDX_TYPE, PC_TYPE, KSP_TYPE>
-                (num_discrete, num_Galerkin, {}, rel_types);
+            std::string config_mg_file = std::string(argv[cnt++]);
+            precond = new GeometricMultiGrid<IDX_TYPE, PC_TYPE, KSP_TYPE>(config_mg_file, data_path + "/" + case_name);
         } else if (strstr(prc_name.c_str(), "BILU")) {
             BlockILU_type type_3d = ILU_3D27;
             if     (strstr(prc_name.c_str(), "3d7" )) type_3d = ILU_3D7 ;
@@ -468,7 +471,7 @@ int main(int argc, char ** argv)
             for (int j = jbeg; j < jend; j++)
             for (int i = ibeg; i < iend; i++)
             for (int k = kbeg; k < kend; k++) {
-                KSP_TYPE abs_nnz[nd];
+                double abs_nnz[nd];
                 const KSP_TYPE* ptr = A->local_matrix->data + j * A->local_matrix->slice_dki_size + i * A->local_matrix->slice_dk_size + k * nd;
                 for (int d = 0; d < nd; d++)
                     abs_nnz[d] = fabs(ptr[d]);
@@ -487,7 +490,7 @@ int main(int argc, char ** argv)
                 double max_offd = 0.0, min_offd = 1e30;
                 for (int d = 0; d < nd; d++) {
                     if (abs_nnz[d] == 0.0) continue;
-                    tot_nnz ++;
+                    tot_nnz ++;// 注意这个非零元是不包括结构化矩阵内的0元素的
                     if (nd == diag_id) continue;
                     max_offd = std::max(max_offd, abs_nnz[d]);
                     min_offd = std::min(min_offd, abs_nnz[d]);
@@ -521,6 +524,20 @@ int main(int argc, char ** argv)
         //     ((GeometricMultiGrid<IDX_TYPE, PC_TYPE, KSP_TYPE>*)precond)->SetRelaxWeights(wgts, num_Galerkin+1);
         // }
 
+    for (int test = 1; test <= 5; test++) {
+        int file_id = 1;
+        switch (test)
+        {
+        case 1: file_id =   1; break;
+        case 2: file_id =   2; break;
+        case 3: file_id =  71; break;
+        case 4: file_id =  72; break;
+        case 5: file_id = 287; break;
+        default: MPI_Abort(MPI_COMM_WORLD, -20230423);
+        }
+        b->read_data(pathname, "array_b." + std::to_string(file_id));
+        x->read_data(pathname, "array_x." + std::to_string(file_id));
+
         double t1 = wall_time();
         solver->Mult(*b, *x, false);
         t1 = wall_time() - t1;
@@ -548,6 +565,7 @@ int main(int argc, char ** argv)
         b_norm = sqrt(b_norm);
          if (my_pid == 0) printf("\033[1;35mtrue ||r|| = %20.16e ||r||/||b||= %20.16e\033[0m\n", 
             true_r_norm, true_r_norm / b_norm);
+    }
 
         if (b != nullptr) {delete b; b = nullptr;}
         if (x != nullptr) {delete x; x = nullptr;}

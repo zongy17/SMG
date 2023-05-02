@@ -1,0 +1,9 @@
+{
+        "num_levs": 4,
+
+	"smoother": ["LGS", "LGS", "LGS", "LGS"],
+	"Coarsen" : ["SEMI_XY", "SEMI_XY", "SEMI_XY"],
+	"restrict": ["Cell_2d4", "Cell_2d4", "Cell_2d4"],
+	"interp"  : ["Cell_2d16","Cell_2d16", "Cell_2d16"],
+	"CoarOper": ["Galerkin", "Galerkin", "Galerkin"]
+}

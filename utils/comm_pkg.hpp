@@ -22,6 +22,9 @@ public:
 
 void StructCommPackage::exec_comm(void * data) {
     // printf("ngb id %d %d %d %d %d %d\n", ngbs_pid[K_L], ngbs_pid[K_U], ngbs_pid[I_L], ngbs_pid[I_U], ngbs_pid[J_L], ngbs_pid[J_U]);
+#ifdef CROSS_POLAR
+    assert(relay);// 跨极点通信一定要走接力传送的方式
+#endif
     if (relay) {
         MPI_Status status;
         // 先收发k向的
@@ -35,10 +38,24 @@ void StructCommPackage::exec_comm(void * data) {
         MPI_Sendrecv(   data, 1, send_subarray[I_U], ngbs_pid[I_U], 122,
                         data, 1, recv_subarray[I_L], ngbs_pid[I_L], 122, cart_comm, &status);
         // 三踢脚：收发j向的
+#ifdef CROSS_POLAR // 此时南北向必须用非阻塞
+        MPI_Request send_req[2], recv_req[2];
+        MPI_Status  send_status[2], recv_status[2];
+
+        MPI_Isend(data, 1, send_subarray[J_U], ngbs_pid[J_U], 14, cart_comm, &send_req[0]);
+        MPI_Isend(data, 1, send_subarray[J_L], ngbs_pid[J_L], 14, cart_comm, &send_req[1]);
+
+        MPI_Irecv(data, 1, recv_subarray[J_U], ngbs_pid[J_U], 14, cart_comm, &recv_req[0]);
+        MPI_Irecv(data, 1, recv_subarray[J_L], ngbs_pid[J_L], 14, cart_comm, &recv_req[1]);
+
+        MPI_Waitall(2, send_req, send_status);
+        MPI_Waitall(2, recv_req, recv_status);
+#else
         MPI_Sendrecv(   data, 1, send_subarray[J_L], ngbs_pid[J_L], 131,
                         data, 1, recv_subarray[J_U], ngbs_pid[J_U], 131, cart_comm, &status);
         MPI_Sendrecv(   data, 1, send_subarray[J_U], ngbs_pid[J_U], 132,
                         data, 1, recv_subarray[J_L], ngbs_pid[J_L], 132, cart_comm, &status);
+#endif
     }
     else {
         for (int ip = 0; ip < NUM_NEIGHBORS; ip++) {

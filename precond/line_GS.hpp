@@ -119,6 +119,11 @@ public:
 			separate_LU();
 			switch(num_diag)
             {
+			case 9:
+				AOS_forward_zero    = AOS_line_forward_zero_2d9<idx_t, data_t, calc_t>;
+                AOS_backward_zero   = AOS_line_backward_zero_2d9<idx_t, data_t, calc_t>;
+                AOS_ALL        		= AOS_line_ALL_2d9<idx_t, data_t, calc_t>;
+                break;
             case 7:
                 AOS_forward_zero    = AOS_line_forward_zero_3d7<idx_t, data_t, calc_t>;
                 AOS_backward_zero   = AOS_line_backward_zero_3d7<idx_t, data_t, calc_t>;
@@ -320,7 +325,7 @@ void LineGS<idx_t, data_t, calc_t>::AOS_ForwardPass(const par_structVector<idx_t
 	assert(kernel);
 
 	const data_t one_minus_weight = 1.0 - weight;
-	if (num_threads > 1) {
+	if (num_threads > 1 && par_A->stencil != stencil_offset_2d9) {// 2d9的不需要有y方向的依赖
 		// level是等值线 slope * j + i = Const, 对于3d7和3d15 斜率为1, 对于3d19和3d27 斜率为2
         const idx_t slope = (par_A->num_diag == 7 || par_A->num_diag == 15) ? 1 : 2;
 		idx_t dim_0 = jend - jbeg, dim_1 = iend - ibeg;
@@ -379,9 +384,12 @@ void LineGS<idx_t, data_t, calc_t>::AOS_ForwardPass(const par_structVector<idx_t
 		}
 	}
 	else {
+		#pragma omp parallel
+		{
 		calc_t buf[x_vec.slice_k_size << 1];
 		calc_t * const sol = buf + kbeg, * const rhs = buf + (x_vec.slice_k_size) + kbeg;
 		calc_t sqD_buf[col_height]; for (idx_t k = 0; k < col_height; k++) sqD_buf[k] = 1.0;
+		#pragma omp for collapse(2) schedule(static)
 		for (idx_t j = jbeg; j < jend; j++)
 		for (idx_t i = ibeg; i < iend; i++) {
 			const idx_t mat_off = j * slice_dki_size + i * slice_dk_size + kbeg * num_diag;
@@ -396,6 +404,7 @@ void LineGS<idx_t, data_t, calc_t>::AOS_ForwardPass(const par_structVector<idx_t
 			kernel(col_height, vec_k_size, vec_ki_size, L_jik, U_jik, b_jik, x_jik, sqD_jik, rhs);
 			this->tri_solver[sid]->Solve(rhs, sol);// 注意这个偏移！！kbeg == 1
 			for (idx_t k = 0; k < col_height; k++) x_jik[k] = one_minus_weight * x_jik[k] + weight * sol[k] / sqD_jik[k];
+		}
 		}
 	}
 }
@@ -435,7 +444,7 @@ void LineGS<idx_t, data_t, calc_t>::AOS_BackwardPass(const par_structVector<idx_
 	assert(kernel);
 	
 	const calc_t one_minus_weight = 1.0 - weight;
-	if (num_threads > 1) {
+	if (num_threads > 1 && par_A->stencil != stencil_offset_2d9) {// 2d9的不需要有y方向的依赖
 		const idx_t slope = (par_A->num_diag == 7 || par_A->num_diag == 15) ? 1 : 2;
         idx_t dim_0 = jend - jbeg, dim_1 = iend - ibeg;
         idx_t flag[dim_0 + 1];
@@ -494,9 +503,12 @@ void LineGS<idx_t, data_t, calc_t>::AOS_BackwardPass(const par_structVector<idx_
 		}
 	}
 	else {
+		#pragma omp parallel
+		{
 		calc_t buf[x_vec.slice_k_size << 1];
 		calc_t * const sol = buf + kbeg, * const rhs = buf + (x_vec.slice_k_size) + kbeg;
 		calc_t sqD_buf[col_height]; for (idx_t k = 0; k < col_height; k++) sqD_buf[k] = 1.0;
+		#pragma omp for collapse(2) schedule(static)
 		for (idx_t j = jend - 1; j >= jbeg; j--)
 		for (idx_t i = iend - 1; i >= ibeg; i--) {
 			const idx_t mat_off = j * slice_dki_size + i * slice_dk_size + kbeg * num_diag;
@@ -510,6 +522,7 @@ void LineGS<idx_t, data_t, calc_t>::AOS_BackwardPass(const par_structVector<idx_
 			kernel(col_height, vec_k_size, vec_ki_size, L_jik, U_jik, b_jik, x_jik, sqD_jik, rhs);
 			this->tri_solver[sid]->Solve(rhs, sol);
 			for (idx_t k = 0; k < col_height; k++) x_jik[k] = one_minus_weight * x_jik[k] + weight * sol[k] / sqD_jik[k];
+		}
 		}
 	}
 }
@@ -645,6 +658,32 @@ void LineGS<idx_t, data_t, calc_t>::separate_LU() {
             }// k loop
         }
 	}
+	else if (mat.num_diag == 9 ) {
+		#pragma omp parallel for collapse(2) schedule(static)
+        for (idx_t j = jbeg; j < jend; j++)
+        for (idx_t i = ibeg; i < iend; i++) {
+			idx_t A_jik_loc = j * mat.slice_dki_size + i * mat.slice_dk_size + kbeg * mat.num_diag;
+            idx_t L_jik_loc = j * L->slice_dki_size + i * L->slice_dk_size + kbeg * L->num_diag;
+            idx_t U_jik_loc = j * U->slice_dki_size + i * U->slice_dk_size + kbeg * U->num_diag;
+            for (idx_t k = kbeg; k < kend; k++) {
+                    // D : 3, 4, 5
+                    // 依据更新中心点时，该点是否已被更新来分类L和U
+                    // L : 0, 1, 2
+                    // U : 6, 7, 8
+                    L->data[L_jik_loc + 0] = mat.data[A_jik_loc + 0];
+                    L->data[L_jik_loc + 1] = mat.data[A_jik_loc + 1];
+					L->data[L_jik_loc + 2] = mat.data[A_jik_loc + 2];
+
+                    U->data[U_jik_loc + 0] = mat.data[A_jik_loc + 6];
+                    U->data[U_jik_loc + 1] = mat.data[A_jik_loc + 7];
+					U->data[U_jik_loc + 2] = mat.data[A_jik_loc + 8];
+
+                    A_jik_loc += mat.num_diag;
+                    L_jik_loc += L->num_diag;
+                    U_jik_loc += U->num_diag;
+            }// k loop
+		}
+	}
     else {
         printf("LineGS::separate_LU: num_diag of %d not yet supported\n", mat.num_diag);
         MPI_Abort(MPI_COMM_WORLD, -4000);
@@ -665,11 +704,12 @@ void LineGS<idx_t, data_t, calc_t>::separate_diags() {
     int my_pid; MPI_Comm_rank(par_A.comm_pkg->cart_comm, &my_pid);
     if (sizeof(calc_t) != sizeof(data_t)) {
         if (my_pid == 0) 
-            printf(" Warning: LGS::separate_diags() truncate calc_t of %ld to data_t of %ld bytes\n", sizeof(calc_t), sizeof(data_t));
+            printf(" Warning: LGS::separate_diags() truncate %d calc_t of %ld to data_t of %ld bytes\n", par_A.num_diag, sizeof(calc_t), sizeof(data_t));
 	}
 
 	switch (seq_A.num_diag)
 	{
+	case  9: DiagGroups_cnt = 3; break;// (0,1,2) || (6,7,8)
 	case  7: DiagGroups_cnt = 2; break;// (0,1) || (5,6)
 	case 19: DiagGroups_cnt = 4; break;// (0,1,2,3) (4,5,6,7) || (11,12,13,14) (15,16,17,18)
 	case 27: DiagGroups_cnt = 6; break;// (0,1,2,3) (4,5,6,7) (8,9,10,11) || (15,16,17,18) (19,20,21,22) (23,24,25,26)
@@ -734,6 +774,18 @@ void LineGS<idx_t, data_t, calc_t>::separate_diags() {
             G5_ptr[0] = aos_ptrs[23]; G5_ptr[1] = aos_ptrs[24]; G5_ptr[2] = aos_ptrs[25]; G5_ptr[3] = aos_ptrs[26];
         }
 	}
+	else if (seq_A.num_diag == 9) {
+		DiagGroups[0] = new seq_structMatrix<idx_t, data_t, calc_t>(3, lx, ly, lz, hx, hy, hz);
+		DiagGroups[1] = new seq_structMatrix<idx_t, data_t, calc_t>(3, lx, ly, lz, hx, hy, hz);
+		#pragma omp parallel for schedule(static)
+		for (idx_t e = 0; e < tot_elems; e++) {
+			const calc_t * aos_ptrs = seq_A.data + e * seq_A.num_diag;
+			data_t * G0_ptr = DiagGroups[0]->data + e * DiagGroups[0]->num_diag;
+            data_t * G1_ptr = DiagGroups[1]->data + e * DiagGroups[1]->num_diag;
+			G0_ptr[0] = aos_ptrs[0]; G0_ptr[1] = aos_ptrs[1]; G0_ptr[2] = aos_ptrs[2];
+            G1_ptr[0] = aos_ptrs[6]; G1_ptr[1] = aos_ptrs[7]; G1_ptr[2] = aos_ptrs[8];
+		}
+	}
 	DiagGroups_separated = true;
 }
 
@@ -773,7 +825,7 @@ void LineGS<idx_t, data_t, calc_t>::SOA_ForwardPass(const par_structVector<idx_t
 
 	const data_t weight = this->weight;
 	const data_t one_minus_weight = 1.0 - weight;
-	if (num_threads > 1) {
+	if (num_threads > 1 && par_A->stencil != stencil_offset_2d9) {// 2d9不需要y方向的依赖
 		// level是等值线 slope * j + i = Const, 对于3d7和3d15 斜率为1, 对于3d19和3d27 斜率为2
         const idx_t slope = (par_A->num_diag == 7 || par_A->num_diag == 15) ? 1 : 2;
 		idx_t dim_0 = jend - jbeg, dim_1 = iend - ibeg;
@@ -841,10 +893,13 @@ void LineGS<idx_t, data_t, calc_t>::SOA_ForwardPass(const par_structVector<idx_t
 		}
 	}
 	else {
+		#pragma omp parallel
+		{
 		calc_t buf[x_vec.slice_k_size << 1];
 		calc_t * const sol = buf + kbeg, * const rhs = buf + (x_vec.slice_k_size) + kbeg;
 		calc_t sqD_buf[col_height]; for (idx_t k = 0; k < col_height; k++) sqD_buf[k] = 1.0;
 		const data_t * A_jik[num_arrs];
+		#pragma omp for collapse(2) schedule(static)
 		for (idx_t j = jbeg; j < jend; j++)
 		for (idx_t i = ibeg; i < iend; i++) {
 			const idx_t vec_off = j * vec_ki_size + i * vec_k_size + kbeg;
@@ -867,6 +922,7 @@ void LineGS<idx_t, data_t, calc_t>::SOA_ForwardPass(const par_structVector<idx_t
 			kernel(col_height, vec_k_size, vec_ki_size, A_jik, b_jik, x_jik, sqD_jik, rhs);
 			tridSolver->Solve_neon_prft(rhs, sol);// 注意这个偏移！！kbeg == 1
 			for (idx_t k = 0; k < col_height; k++) x_jik[k] = one_minus_weight * x_jik[k] + weight * sol[k] / sqD_jik[k];
+		}
 		}
 	}
 
@@ -909,7 +965,7 @@ void LineGS<idx_t, data_t, calc_t>::SOA_BackwardPass(const par_structVector<idx_
 	
 	const calc_t weight = this->weight;
 	const calc_t one_minus_weight = 1.0 - weight;
-	if (num_threads > 1) {
+	if (num_threads > 1 && par_A->stencil != stencil_offset_2d9) {
 		const idx_t slope = (par_A->num_diag == 7 || par_A->num_diag == 15) ? 1 : 2;
         idx_t dim_0 = jend - jbeg, dim_1 = iend - ibeg;
         idx_t flag[dim_0 + 1];
@@ -983,10 +1039,13 @@ void LineGS<idx_t, data_t, calc_t>::SOA_BackwardPass(const par_structVector<idx_
 		}
 	}
 	else {
+		#pragma omp parallel
+		{
 		calc_t buf[x_vec.slice_k_size << 1];
 		calc_t * const sol = buf + kbeg, * const rhs = buf + (x_vec.slice_k_size) + kbeg;
 		calc_t sqD_buf[col_height]; for (idx_t k = 0; k < col_height; k++) sqD_buf[k] = 1.0;
 		const data_t * A_jik[num_arrs];
+		#pragma omp for collapse(2) schedule(static)
 		for (idx_t j = jend - 1; j >= jbeg; j--)
 		for (idx_t i = iend - 1; i >= ibeg; i--) {
 			const idx_t vec_off = j * vec_ki_size + i * vec_k_size + kend;
@@ -1012,6 +1071,7 @@ void LineGS<idx_t, data_t, calc_t>::SOA_BackwardPass(const par_structVector<idx_
 			x_jik -= col_height;// 重新将写回的位置移动到柱底
 			sqD_jik -= col_height;
 			for (idx_t k = 0; k < col_height; k++) x_jik[k] = one_minus_weight * x_jik[k] + weight * sol[k] / sqD_jik[k];
+		}
 		}
 	}
 }

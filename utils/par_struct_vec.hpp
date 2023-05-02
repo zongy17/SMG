@@ -101,7 +101,11 @@ void par_structVector<idx_t, data_t>::setup_cart_comm(MPI_Comm comm,
 
     // create 3D distributed grid
     idx_t dims[3] = {num_proc_y, num_proc_x, num_proc_z};
-    idx_t periods[3] = {0, 0, 0};
+#ifdef CROSS_POLAR
+    int periods[3] = {0, 1, 0};
+#else
+    int periods[3] = {0, 0, 0};
+#endif
 
     MPI_Cart_create(comm, 3, dims, periods, 0, &cart_comm);
     assert(cart_comm != MPI_COMM_NULL);
@@ -112,6 +116,22 @@ void par_structVector<idx_t, data_t>::setup_cart_comm(MPI_Comm comm,
 
     MPI_Comm_rank(cart_comm, &my_pid);
     MPI_Cart_coords(cart_comm, my_pid, 3, cart_ids);
+
+#ifdef CROSS_POLAR // 特别处理南北极的进程
+    // assert(num_proc_x % 2 == 0);
+    if (cart_ids[0] == 0) {// 在南极
+        assert(ngbs_pid[J_L] == MPI_PROC_NULL);
+        IDX_TYPE tmp = cart_ids[1] + num_proc_x / 2;// cart_ids[1] 标记了该进程在东西方向上的相对位置
+        tmp = (tmp > num_proc_x - 1) ? (tmp % num_proc_x) : tmp;
+        ngbs_pid[J_L] = cart_ids[0] * num_proc_x + tmp;
+    }
+    if (cart_ids[0] == num_proc_y - 1) {// 在北极
+        assert(ngbs_pid[J_U] == MPI_PROC_NULL);
+        IDX_TYPE tmp = cart_ids[1] + num_proc_x / 2;// cart_ids[1] 标记了该进程在东西方向上的相对位置
+        tmp = (tmp > num_proc_x - 1) ? (tmp % num_proc_x) : tmp;
+        ngbs_pid[J_U] = cart_ids[0] * num_proc_x + tmp;
+    }
+#endif
 
 #ifdef DEBUG
     printf("proc %3d cart_ids (%3d,%3d,%3d) IL %3d IU %3d JL %3d JU %3d KL %3d KU %3d\n",
@@ -223,6 +243,57 @@ void par_structVector<idx_t, data_t>::update_halo() const
 #ifdef DEBUG
     if (my_pid == 1) {
         local_vector->print_level(1);
+    }
+#endif
+
+#ifdef CROSS_POLAR
+    // 如果lat方向的宽度比1大，需要做lat向的数据reverse
+    assert(local_vector->halo_y == 1);
+    if (comm_pkg->ngbs_pid[J_U] == comm_pkg->my_pid) {
+        assert(comm_pkg->ngbs_pid[I_U] == comm_pkg->my_pid && comm_pkg->ngbs_pid[I_L] == comm_pkg->my_pid);
+
+        const idx_t jt = local_vector->halo_y + local_vector->local_y;
+        const idx_t js = jt - 1;// assert(local_vector->halo_y == 1);
+        // 需要拷贝倒一下顺序
+        assert(this->global_size_x == local_vector->local_x && this->global_size_x % 2 == 0);
+        idx_t i_mid = local_vector->halo_x + local_vector->local_x / 2, i_end = local_vector->halo_x * 2 + local_vector->local_x;
+        const idx_t kbeg = 0, kend = kbeg + local_vector->slice_k_size;
+        const idx_t offset = local_vector->local_x / 2;
+        #pragma omp parallel for schedule(static)
+        for (idx_t i = 0; i < i_end; i++) {
+            if (i < i_mid) {
+                for (idx_t k = kbeg; k < kend; k++)
+                    local_vector->data[k +  i          * local_vector->slice_k_size + jt * local_vector->slice_ki_size]
+                  = local_vector->data[k + (i + offset)* local_vector->slice_k_size + js * local_vector->slice_ki_size];
+            } else {
+                for (idx_t k = kbeg; k < kend; k++)
+                    local_vector->data[k +  i          * local_vector->slice_k_size + jt * local_vector->slice_ki_size]
+                  = local_vector->data[k + (i - offset)* local_vector->slice_k_size + js * local_vector->slice_ki_size];
+            }
+        }
+    }
+    if (comm_pkg->ngbs_pid[J_L] == comm_pkg->my_pid) {
+        assert(comm_pkg->ngbs_pid[I_U] == comm_pkg->my_pid && comm_pkg->ngbs_pid[I_L] == comm_pkg->my_pid);
+
+        const idx_t jt = 0;
+        const idx_t js = jt + 1;// assert(local_vector->halo_y == 1);
+        // 需要拷贝倒一下顺序
+        assert(this->global_size_x == local_vector->local_x && this->global_size_x % 2 == 0);
+        idx_t i_mid = local_vector->halo_x + local_vector->local_x / 2, i_end = local_vector->halo_x * 2 + local_vector->local_x;
+        const idx_t kbeg = 0, kend = kbeg + local_vector->slice_k_size;
+        const idx_t offset = local_vector->local_x / 2;
+        #pragma omp parallel for schedule(static)
+        for (idx_t i = 0; i < i_end; i++) {
+            if (i < i_mid) {
+                for (idx_t k = kbeg; k < kend; k++)
+                    local_vector->data[k +  i          * local_vector->slice_k_size + jt * local_vector->slice_ki_size]
+                  = local_vector->data[k + (i + offset)* local_vector->slice_k_size + js * local_vector->slice_ki_size];
+            } else {
+                for (idx_t k = kbeg; k < kend; k++)
+                    local_vector->data[k +  i          * local_vector->slice_k_size + jt * local_vector->slice_ki_size]
+                  = local_vector->data[k + (i - offset)* local_vector->slice_k_size + js * local_vector->slice_ki_size];
+            }
+        }
     }
 #endif
 }
@@ -338,8 +409,10 @@ void par_structVector<idx_t, data_t>::read_data(const std::string pathname, cons
                 (j + vec.halo_y) * vec.slice_ki_size]
                 = ((data_t *) buf)[k + lz * (i + lx * j)];// other
 
-    
-    MPI_File_close(&fh);
+    ret = MPI_File_close(&fh);
+    if (ret != MPI_SUCCESS) {
+        printf("Could not close file: ret %d\n", ret);
+    }
     MPI_Type_free(&read_type);
 
     free(buf);

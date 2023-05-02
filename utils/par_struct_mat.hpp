@@ -116,6 +116,9 @@ par_structMatrix<idx_t, data_t, calc_t>::par_structMatrix(MPI_Comm comm, idx_t n
 
     switch (num_diag)
     {
+    case 9:
+        stencil = stencil_offset_2d9;
+        break;
     case 7:
         stencil = stencil_offset_3d7;
 #ifdef __aarch64__
@@ -201,7 +204,11 @@ void par_structMatrix<idx_t, data_t, calc_t>::setup_cart_comm(MPI_Comm comm,
 
     // create 2D distributed grid
     int dims[3] = {num_proc_y, num_proc_x, num_proc_z};
+#ifdef CROSS_POLAR
+    int periods[3] = {0, 1, 0};
+#else
     int periods[3] = {0, 0, 0};
+#endif
 
     MPI_Cart_create(comm, 3, dims, periods, 0, &cart_comm);
     assert(cart_comm != MPI_COMM_NULL);
@@ -212,6 +219,22 @@ void par_structMatrix<idx_t, data_t, calc_t>::setup_cart_comm(MPI_Comm comm,
 
     MPI_Comm_rank(cart_comm, &my_pid);
     MPI_Cart_coords(cart_comm, my_pid, 3, cart_ids);
+
+#ifdef CROSS_POLAR // 特别处理南北极的进程
+    // assert(num_proc_x % 2 == 0);
+    if (cart_ids[0] == 0) {// 在南极
+        assert(ngbs_pid[J_L] == MPI_PROC_NULL);
+        IDX_TYPE tmp = cart_ids[1] + num_proc_x / 2;// cart_ids[1] 标记了该进程在东西方向上的相对位置
+        tmp = (tmp > num_proc_x - 1) ? (tmp % num_proc_x) : tmp;
+        ngbs_pid[J_L] = cart_ids[0] * num_proc_x + tmp;
+    }
+    if (cart_ids[0] == num_proc_y - 1) {// 在北极
+        assert(ngbs_pid[J_U] == MPI_PROC_NULL);
+        IDX_TYPE tmp = cart_ids[1] + num_proc_x / 2;// cart_ids[1] 标记了该进程在东西方向上的相对位置
+        tmp = (tmp > num_proc_x - 1) ? (tmp % num_proc_x) : tmp;
+        ngbs_pid[J_U] = cart_ids[0] * num_proc_x + tmp;
+    }
+#endif
 
 #ifdef DEBUG
     printf("proc %3d cart_ids (%3d,%3d,%3d) IL %3d IU %3d JL %3d JU %3d KL %3d KU %3d\n",
@@ -328,6 +351,55 @@ void par_structMatrix<idx_t, data_t, calc_t>::update_halo()
 #ifdef DEBUG
     if (my_pid == 1) {
         local_matrix->print_level_diag(1, 3);
+    }
+#endif
+
+#ifdef CROSS_POLAR
+    // 如果lat方向的宽度比1大，需要做lat向的数据reverse
+    assert(local_matrix->halo_y == 1);
+    if (comm_pkg->ngbs_pid[J_U] == comm_pkg->my_pid) {
+        assert(comm_pkg->ngbs_pid[I_U] == comm_pkg->my_pid && comm_pkg->ngbs_pid[I_L] == comm_pkg->my_pid);
+
+        const idx_t jt = local_matrix->halo_y + local_matrix->local_y;
+        const idx_t js = jt - 1;// assert(local_matrix->halo_y == 1);
+        // 需要拷贝倒一下顺序
+        idx_t i_mid = local_matrix->halo_x + local_matrix->local_x / 2, i_end = local_matrix->halo_x * 2 + local_matrix->local_x;
+        const idx_t kdbeg = 0, kdend = kdbeg + local_matrix->slice_dk_size;
+        const idx_t offset = local_matrix->local_x / 2;
+        #pragma omp parallel for schedule(static)
+        for (idx_t i = 0; i < i_end; i++) {
+            if (i < i_mid) {
+                for (idx_t kd = kdbeg; kd < kdend; kd++)
+                    local_matrix->data[kd +  i          * local_matrix->slice_dk_size + jt * local_matrix->slice_dki_size]
+                  = local_matrix->data[kd + (i + offset)* local_matrix->slice_dk_size + js * local_matrix->slice_dki_size];
+            } else {
+                for (idx_t kd = kdbeg; kd < kdend; kd++)
+                    local_matrix->data[kd +  i          * local_matrix->slice_dk_size + jt * local_matrix->slice_dki_size]
+                  = local_matrix->data[kd + (i - offset)* local_matrix->slice_dk_size + js * local_matrix->slice_dki_size];
+            }
+        }
+    }
+    if (comm_pkg->ngbs_pid[J_L] == comm_pkg->my_pid) {
+        assert(comm_pkg->ngbs_pid[I_U] == comm_pkg->my_pid && comm_pkg->ngbs_pid[I_L] == comm_pkg->my_pid);
+
+        const idx_t jt = 0;
+        const idx_t js = jt + 1;// assert(local_matrix->halo_y == 1);
+        // 需要拷贝倒一下顺序
+        idx_t i_mid = local_matrix->halo_x + local_matrix->local_x / 2, i_end = local_matrix->halo_x * 2 + local_matrix->local_x;
+        const idx_t kdbeg = 0, kdend = kdbeg + local_matrix->slice_dk_size;
+        const idx_t offset = local_matrix->local_x / 2;
+        #pragma omp parallel for schedule(static)
+        for (idx_t i = 0; i < i_end; i++) {
+            if (i < i_mid) {
+                for (idx_t kd = kdbeg; kd < kdend; kd++)
+                    local_matrix->data[kd +  i          * local_matrix->slice_dk_size + jt * local_matrix->slice_dki_size]
+                  = local_matrix->data[kd + (i + offset)* local_matrix->slice_dk_size + js * local_matrix->slice_dki_size];
+            } else {
+                for (idx_t kd = kdbeg; kd < kdend; kd++)
+                    local_matrix->data[kd +  i          * local_matrix->slice_dk_size + jt * local_matrix->slice_dki_size]
+                  = local_matrix->data[kd + (i - offset)* local_matrix->slice_dk_size + js * local_matrix->slice_dki_size];
+            }
+        }
     }
 #endif
 }
@@ -466,7 +538,10 @@ void par_structMatrix<idx_t, data_t, calc_t>::read_data(const std::string pathna
     // 依次读入A的各条对角线
     for (idx_t idiag = 0; idiag < num_diag; idiag++) {
         const std::string filename = pathname + "/array_a." + std::to_string(idiag);
-        MPI_File_open(comm_pkg->cart_comm, filename.c_str(), MPI_MODE_RDONLY, MPI_INFO_NULL, &fh);
+        int ret = MPI_File_open(comm_pkg->cart_comm, filename.c_str(), MPI_MODE_RDONLY, MPI_INFO_NULL, &fh);
+        if (ret != MPI_SUCCESS) {
+            printf("Could not open file: ret %d\n", ret);
+        }
         MPI_File_set_view(fh, displacement, etype, read_type, "native", MPI_INFO_NULL);
         MPI_File_read_all(fh, buf, tot_len, etype, &status);
         for (idx_t j = 0; j < ly; j++)
@@ -480,7 +555,10 @@ void par_structMatrix<idx_t, data_t, calc_t>::read_data(const std::string pathna
             A_local.data[tgt_id]
                     = ((data_t *)buf)[src_id];// other
         }
-        MPI_File_close(&fh);
+        ret = MPI_File_close(&fh);
+        if (ret != MPI_SUCCESS) {
+            printf("Could not close file: ret %d\n", ret);
+        }
     }
     free(buf);
     // 矩阵需要填充halo区（目前仅此一次）

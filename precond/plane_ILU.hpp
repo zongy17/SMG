@@ -145,6 +145,8 @@ void PlaneILU<idx_t, data_t, calc_t>::Setup() {
             extract_ids = {5, 6, 7, 8, 9, 10, 11, 12, 13};
         } else if (A.num_diag == 27) {
             extract_ids = {9, 10, 11, 12, 13, 14, 15, 16, 17};
+        } else if (A.num_diag == 9) {// 2d9
+            extract_ids = {0, 1, 2, 3, 4, 5, 6, 7, 8};
         } else assert(false);
     }
     assert(extract_ids.size() == (std::size_t) num_stencil);

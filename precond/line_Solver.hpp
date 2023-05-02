@@ -86,7 +86,7 @@ void LineSolver<idx_t, data_t, calc_t>::Setup()
     if (my_pid == 0) printf("  LineSolver length: %d\n", n_size);
     tri_solver = new TridiagSolver<idx_t, data_t, calc_t> * [num_solvers];
 
-    if (num_diag != 7 && num_diag != 19 && num_diag != 27) {
+    if (num_diag != 7 && num_diag != 19 && num_diag != 27 && num_diag != 9) {
         printf("INVALID num_diag of %d to extract vals from matrix\n", num_diag);
         MPI_Abort(MPI_COMM_WORLD, -4000);
     }

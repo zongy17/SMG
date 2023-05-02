@@ -10,15 +10,15 @@
 #include "../precond/block_ILU.hpp"
 
 
-typedef enum {STANDARD, SEMI_XY} COARSEN_TYPE;
+typedef enum {FULL_XYZ, SEMI_XY, DECP_XZ} COARSEN_TYPE;
 typedef enum {DISCRETIZED, GALERKIN} COARSE_OP_TYPE;
 typedef enum {PJ, PGS, LGS, PILU, BILU3d7, BILU3d15, BILU3d19, BILU3d27, GaussElim} RELAX_TYPE;
-typedef enum {Rst_8cell, Rst_64cell, Rst_4cell} RESTRICT_TYPE;
-typedef enum {Plg_linear_8cell, Plg_linear_64cell, Plg_linear_4cell} PROLONG_TYPE;
+typedef enum {Vtx_2d9_OpDep, Vtx_2d9, Vtx_2d5, Vtx_inject, Cell_2d4, Cell_2d16, Cell_3d8, Cell_3d64} RSTR_PRLG_TYPE;
 
 template<typename idx_t>
 class COAR_TO_FINE_INFO {
 public:
+    COARSEN_TYPE type;
     // 细网格上的起始索引（以local索引计）：在cell-center的形式时
     // 表示本进程范围内的第0个粗网格cell由本进程范围内的第base_和第base_+1个cell粗化而来
     idx_t fine_base_idx[3];

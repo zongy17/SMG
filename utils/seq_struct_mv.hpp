@@ -373,6 +373,7 @@ void seq_vec_elemwise_div(seq_structVector<idx_t, data_t1> & inout_vec, const se
 /*
  * * * * * seq_structMatrix * * * * * 
  */
+#include "kernels_2d9.hpp"
 #include "kernels_3d7.hpp"
 #include "kernels_3d19.hpp"
 #include "kernels_3d27.hpp"
@@ -391,6 +392,7 @@ seq_structMatrix<idx_t, data_t, calc_t>::seq_structMatrix(idx_t num_d, idx_t lx,
     slice_dki_size = slice_dk_size * (local_x + 2 * halo_x);
     switch (num_diag)
     {
+    case  9: spmv = AOS_spmv_2d9 <idx_t, data_t>; spmv_scaled = nullptr; break;
     case  7: spmv = AOS_spmv_3d7 <idx_t, data_t>; spmv_scaled = AOS_spmv_3d7_scaled<idx_t, data_t>; break;
     case 19: spmv = AOS_spmv_3d19<idx_t, data_t>; spmv_scaled = AOS_spmv_3d19_scaled<idx_t, data_t>; break;
     case 27: spmv = AOS_spmv_3d27<idx_t, data_t>; spmv_scaled = AOS_spmv_3d27_scaled<idx_t, data_t>; break;

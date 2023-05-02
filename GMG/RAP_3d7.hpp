@@ -71,10 +71,17 @@
     J的最邻近前后为2*(J-by)+by, 2*(J-by)+by+1，即2*J-by, 2*J-by+1
     K的最邻近上下为2*(K-bz)+bz, 2*(K-bz)+bz+1，即2*K-bz, 2*K-bz+1
  */
-#define NUM_DIAG 7
+#define C_IDX(i, j, k)   (k) + (i) * cz + (j) * czcx
+#define F_IDX(i, j, k)   (k) + (i) * fz + (j) * fzfx
+#define SHIFT(oi, oj, ok) 3 + (ok) + (oi) * 2 + (oj) * 3 
+// 当本进程不在某维度的边界时，可以直接算（前提要求细网格的halo区已填充，但R采用4点时似乎也不用？）
+#define CHECK_BDR(CI, CJ, CK) \
+    (ilb==false || (CI) >= cibeg) && (iub==false || (CI) < ciend) && \
+    (jlb==false || (CJ) >= cjbeg) && (jub==false || (CJ) < cjend) && \
+    (klb==false || (CK) >= ckbeg) && (kub==false || (CK) < ckend)
 
 template<typename idx_t, typename data_t>
-void RAP_3d7(
+void RCell3d8_A3d7_PCell3d8(
     // 细网格的数据，以及各维度的存储大小（含halo区）
     const data_t * fine_mat, const idx_t fx, const idx_t fy, const idx_t fz, 
     // 粗网格的数据，以及各维度的存储大小（含halo区）
@@ -91,25 +98,16 @@ void RAP_3d7(
     const idx_t base_x, const idx_t base_y, const idx_t base_z) 
 {
     assert(base_x == 1 && base_y == 1 && base_z == 1);
-    for (idx_t i = 0; i < NUM_DIAG * cx * cy * cz; i++) {
+    for (idx_t i = 0; i < 7 * cx * cy * cz; i++) {
         // 初值赋为0，为了边界条件
         coar_mat[i] = 0.0;
     }
 
-    const data_t (*AF)[NUM_DIAG] = (data_t (*)[NUM_DIAG])fine_mat;
-    data_t (*AC)[NUM_DIAG] = (data_t (*)[NUM_DIAG])coar_mat;
+    const data_t (*AF)[7] = (data_t (*)[7])fine_mat;
+    data_t (*AC)[7] = (data_t (*)[7])coar_mat;
 
     const idx_t czcx = cz * cx;// cz * cx
     const idx_t fzfx = fz * fx;// fz * fx
-#define C_IDX(i, j, k)   (k) + (i) * cz + (j) * czcx
-#define F_IDX(i, j, k)   (k) + (i) * fz + (j) * fzfx
-#define SHIFT(oi, oj, ok) 3 + (ok) + (oi) * 2 + (oj) * 3 
-// 当本进程不在某维度的边界时，可以直接算（前提要求细网格的halo区已填充，但R采用4点时似乎也不用？）
-#define CHECK_BDR(CI, CJ, CK) \
-    (ilb==false || (CI) >= cibeg) && (iub==false || (CI) < ciend) && \
-    (jlb==false || (CJ) >= cjbeg) && (jub==false || (CJ) < cjend) && \
-    (klb==false || (CK) >= ckbeg) && (kub==false || (CK) < ckend)
-
 	#pragma omp parallel for collapse(3) schedule(static)
     for (idx_t J = cjbeg; J < cjend; J++)
     for (idx_t I = cibeg; I < ciend; I++)
@@ -362,13 +360,12 @@ void RAP_3d7(
 
 	}
 
-#undef C_IDX
-#undef F_IDX
-#undef SHIFT
+
+
 }
 
 template<typename idx_t, typename data_t>
-void RAP_3d7_semiXY(
+void RCell2d4_A3d7_PCell2d4(
     // 细网格的数据，以及各维度的存储大小（含halo区）
     const data_t * fine_mat, const idx_t fx, const idx_t fy, const idx_t fz, 
     // 粗网格的数据，以及各维度的存储大小（含halo区）
@@ -385,25 +382,16 @@ void RAP_3d7_semiXY(
     const idx_t base_x, const idx_t base_y, const idx_t base_z) 
 {
     assert(base_x == 1 && base_y == 1 && base_z == 1);
-    for (idx_t i = 0; i < NUM_DIAG * cx * cy * cz; i++) {
+    for (idx_t i = 0; i < 7 * cx * cy * cz; i++) {
         // 初值赋为0，为了边界条件
         coar_mat[i] = 0.0;
     }
 
-    const data_t (*AF)[NUM_DIAG] = (data_t (*)[NUM_DIAG])fine_mat;
-    data_t (*AC)[NUM_DIAG] = (data_t (*)[NUM_DIAG])coar_mat;
+    const data_t (*AF)[7] = (data_t (*)[7])fine_mat;
+    data_t (*AC)[7] = (data_t (*)[7])coar_mat;
 
     const idx_t czcx = cz * cx;// cz * cx
     const idx_t fzfx = fz * fx;// fz * fx
-#define C_IDX(i, j, k)   (k) + (i) * cz + (j) * czcx
-#define F_IDX(i, j, k)   (k) + (i) * fz + (j) * fzfx
-#define SHIFT(oi, oj, ok) 3 + (ok) + (oi) * 2 + (oj) * 3 
-// 当本进程不在某维度的边界时，可以直接算（前提要求细网格的halo区已填充，但R采用4点时似乎也不用？）
-#define CHECK_BDR(CI, CJ, CK) \
-    (ilb==false || (CI) >= cibeg) && (iub==false || (CI) < ciend) && \
-    (jlb==false || (CJ) >= cjbeg) && (jub==false || (CJ) < cjend) && \
-    (klb==false || (CK) >= ckbeg) && (kub==false || (CK) < ckend)
-
 	#pragma omp parallel for collapse(3) schedule(static)
     for (idx_t J = cjbeg; J < cjend; J++)
     for (idx_t I = cibeg; I < ciend; I++)
@@ -565,13 +553,11 @@ void RAP_3d7_semiXY(
 			AC[C_IDX(I,J,K)][6] = res;
 		}
 	}
+}
 
 #undef C_IDX
 #undef F_IDX
 #undef SHIFT
-}
-
-
-#undef NUM_DIAG
+#undef CHECK_BDR
 
 #endif

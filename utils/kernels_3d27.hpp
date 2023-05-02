@@ -2962,7 +2962,7 @@ void inline SOA_line_backward_ALL_3d27_Cal32Stg16(const int num,
     x0 -= min_nk; x1 -= min_nk; x2 -= min_nk; x3 -= min_nk;
     x4 -= min_nk; x5 -= min_nk; x6 -= min_nk; x7 -= min_nk;
     x8 -= min_nk; x9 -= min_nk; x10-= min_nk; x11-= min_nk;
-    x15-= min_nk; x16-= min_nk; x17-= min_gk; x18-= min_nk;
+    x15-= min_nk; x16-= min_nk; x17-= min_nk; x18-= min_nk;
     x19-= min_nk; x20-= min_nk; x21-= min_nk; x22-= min_nk;
     x23-= min_nk; x24-= min_nk; x25-= min_nk; x26-= min_nk; b13 -= min_nk; rhs -= min_nk;
     for (k = min_nk - 1; k >= 0; k--) {

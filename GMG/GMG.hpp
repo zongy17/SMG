@@ -6,6 +6,10 @@
 #include "restrict.hpp"
 #include "prolong.hpp"
 
+#include "../include/json.hpp"
+#include <fstream>
+using json = nlohmann::json;
+
 #include <vector>
 #include <string>
 // #include "../copy_with_trunc.hpp"
@@ -13,16 +17,15 @@
 template<typename idx_t, typename data_t, typename calc_t>
 class GeometricMultiGrid : public Solver<idx_t, data_t, calc_t> {
 public:
-    const idx_t num_levs, num_rediscrete, num_Galerkin;
-    std::vector<idx_t> num_dims;
+    idx_t num_levs;
     std::vector<COARSEN_TYPE> coarsen_types;
     std::vector<COARSE_OP_TYPE> coarse_op_types;
     std::vector<RELAX_TYPE> relax_types;
-    std::vector<RESTRICT_TYPE> restrict_types;
-    std::vector<PROLONG_TYPE> prolong_types;
-    std::vector<std::string> matrix_files;
+    std::vector<RSTR_PRLG_TYPE> restrict_types;
+    std::vector<RSTR_PRLG_TYPE> prolong_types;
+    std::string mat_repo;
     
-    idx_t num_grid_sweeps[2];
+    idx_t num_grid_sweeps[2] = {1, 1};
 
     const Operator<idx_t, calc_t, calc_t> * oper = nullptr;// operator (often as matrix-A of the problem)
 
@@ -45,8 +48,7 @@ public:
     // 映射两端的各是一个三维向量par_structVector<idx_t, oper_t>
     COAR_TO_FINE_INFO<idx_t> * coar_to_fine_maps = nullptr;
 
-    GeometricMultiGrid(idx_t n_DIS_levs, idx_t n_GAL_levs, 
-        const std::vector<std::string> matnames, const std::vector<RELAX_TYPE> rel_type);
+    GeometricMultiGrid(std::string config_file, std::string matrices_repo);
 
     ~GeometricMultiGrid();
 
@@ -95,40 +97,116 @@ protected:
 };
 
 template<typename idx_t, typename data_t, typename calc_t>
-GeometricMultiGrid<idx_t, data_t, calc_t>::GeometricMultiGrid(idx_t n_rediscrete, idx_t n_Galerkin, 
-        const std::vector<std::string> matnames, const std::vector<RELAX_TYPE> rel_types)
-    :   num_levs(n_rediscrete + n_Galerkin + 1), num_rediscrete(n_rediscrete), num_Galerkin(n_Galerkin)
+GeometricMultiGrid<idx_t, data_t, calc_t>::GeometricMultiGrid(std::string config_file, std::string matrices_repo)
 {
-    assert(n_Galerkin >= 0 && n_rediscrete >= 0);
-
-    num_grid_sweeps[0] = num_grid_sweeps[1] = 1;
+    mat_repo = matrices_repo;
     int my_pid; MPI_Comm_rank(MPI_COMM_WORLD, &my_pid);
-    if (my_pid == 0) printf(" pre = %d, post = %d\n", num_grid_sweeps[0], num_grid_sweeps[1]);
-
-    for (size_t i = 0; i < matnames.size(); i++)
-        matrix_files.push_back(matnames[i]);
-
-    relax_types.push_back(rel_types[0]);
-
-    for (idx_t i = 1; i <= n_rediscrete + n_Galerkin; i++) {
-        if (i <= n_rediscrete) {
-            coarsen_types.push_back(SEMI_XY);
-            coarse_op_types.push_back(DISCRETIZED);
-            restrict_types.push_back(Rst_4cell);
-            prolong_types.push_back(Plg_linear_4cell);
-        } else {
-            coarsen_types.push_back(STANDARD);
-            coarse_op_types.push_back(GALERKIN);
-            restrict_types.push_back(Rst_8cell);
-            prolong_types.push_back(Plg_linear_8cell);// 用这个插值好像更好？？！！！
+    if (my_pid == 0) {// 0号进程负责读取配置文件
+        std::ifstream f(config_file);
+        json data = json::parse(f);
+        num_levs = data["num_levs"];
+        printf("num_levs %d\n", num_levs);
+        // 粗化类型：三维，二维，或者 解耦的二维
+        for (idx_t i = 0; i < num_levs - 1; i++) {
+            if      (data["Coarsen"][i] == "FULL_XYZ") coarsen_types.push_back(FULL_XYZ);
+            else if (data["Coarsen"][i] == "SEMI_XY" ) coarsen_types.push_back(SEMI_XY);
+            else if (data["Coarsen"][i] == "DECP_XZ" ) coarsen_types.push_back(DECP_XZ);
+            else MPI_Abort(MPI_COMM_WORLD, -707);
         }
-        // restrict_types.push_back(Rst_64cell);
-        // prolong_types.push_back(Plg_linear_64cell);
-        relax_types.push_back(rel_types[i]);
+        // 限制算子
+        for (idx_t i = 0; i < num_levs - 1; i++) {
+            if      (data["restrict"][i] == "Vtx_2d9"      ) restrict_types.push_back(Vtx_2d9);
+            else if (data["restrict"][i] == "Vtx_2d9_OpDep") restrict_types.push_back(Vtx_2d9_OpDep);
+            else if (data["restrict"][i] == "Vtx_2d5"      ) restrict_types.push_back(Vtx_2d5);
+            else if (data["restrict"][i] == "Vtx_inject"   ) restrict_types.push_back(Vtx_inject);
+            else if (data["restrict"][i] == "Cell_2d4"     ) restrict_types.push_back(Cell_2d4);
+            else if (data["restrict"][i] == "Cell_2d16"    ) restrict_types.push_back(Cell_2d16);
+            else if (data["restrict"][i] == "Cell_3d8"     ) restrict_types.push_back(Cell_3d8);
+            else if (data["restrict"][i] == "Cell_3d64"    ) restrict_types.push_back(Cell_3d64);
+            else MPI_Abort(MPI_COMM_WORLD, -709);
+        }
+        // 插值算子
+        for (idx_t i = 0; i < num_levs - 1; i++) {
+            if      (data["interp"][i] == "Vtx_2d9"      ) prolong_types.push_back(Vtx_2d9);
+            else if (data["interp"][i] == "Vtx_2d9_OpDep") prolong_types.push_back(Vtx_2d9_OpDep);
+            else if (data["interp"][i] == "Vtx_2d5"      ) prolong_types.push_back(Vtx_2d5);
+            else if (data["interp"][i] == "Vtx_inject"   ) prolong_types.push_back(Vtx_inject);
+            else if (data["interp"][i] == "Cell_2d4"     ) prolong_types.push_back(Cell_2d4);
+            else if (data["interp"][i] == "Cell_2d16"    ) prolong_types.push_back(Cell_2d16);
+            else if (data["interp"][i] == "Cell_3d8"     ) prolong_types.push_back(Cell_3d8);
+            else if (data["interp"][i] == "Cell_3d64"    ) prolong_types.push_back(Cell_3d64);
+            else MPI_Abort(MPI_COMM_WORLD, -710);
+        }
+        // 粗网格构造方式：重离散，或者 Galerkin
+        for (idx_t i = 0; i < num_levs - 1; i++) {
+            if      (data["CoarOper"][i] == "rediscrete") coarse_op_types.push_back(DISCRETIZED);
+            else if (data["CoarOper"][i] == "Galerkin"  ) coarse_op_types.push_back(GALERKIN);
+            else MPI_Abort(MPI_COMM_WORLD, -708);
+        }
+        // 光滑子
+        for (idx_t i = 0; i < num_levs; i++) {
+            if      (data["smoother"][i] == "PGS"     ) relax_types.push_back(PGS);
+            else if (data["smoother"][i] == "LGS"     ) relax_types.push_back(LGS);
+            else if (data["smoother"][i] == "PILU"    ) relax_types.push_back(PILU);
+            else if (data["smoother"][i] == "BILU3d7" ) relax_types.push_back(BILU3d7);
+            else if (data["smoother"][i] == "BILU3d15") relax_types.push_back(BILU3d15);
+            else if (data["smoother"][i] == "BILU3d19") relax_types.push_back(BILU3d19);
+            else if (data["smoother"][i] == "BILU3d27") relax_types.push_back(BILU3d27);
+            else if (data["smoother"][i] == "LU"      ) relax_types.push_back(GaussElim);
+            else MPI_Abort(MPI_COMM_WORLD, -706);
+        }
     }
 
-    assert(relax_types.size() == rel_types.size() && relax_types.size() == ((size_t)num_levs));
-
+    // 广播获取配置参数
+    MPI_Bcast(&num_levs, 1, (sizeof(idx_t) == 4)? MPI_INT : MPI_LONG_INT, 0, MPI_COMM_WORLD);
+    if (my_pid != 0) {
+        relax_types.reserve(num_levs);
+        coarsen_types.reserve(num_levs - 1);
+        restrict_types.reserve(num_levs - 1);
+        prolong_types.reserve(num_levs - 1);
+        coarse_op_types.reserve(num_levs - 1);
+    }
+    MPI_Bcast(coarsen_types.data(), num_levs - 1, MPI_INT, 0, MPI_COMM_WORLD);
+#ifdef DEBUG
+    if (my_pid != 0) {
+        printf("proc %d: ", my_pid);
+        for (idx_t i = 0; i < num_levs - 1; i++) printf("%d ", relax_types[i]);
+        printf("\n");
+    }
+#endif
+    MPI_Bcast(restrict_types.data(), num_levs - 1, MPI_INT, 0, MPI_COMM_WORLD);
+#ifdef DEBUG
+    if (my_pid != 0) {
+        printf("proc %d: ", my_pid);
+        for (idx_t i = 0; i < num_levs - 1; i++) printf("%d ", restrict_types[i]);
+        printf("\n");
+    }
+#endif
+    MPI_Bcast(prolong_types.data(), num_levs - 1, MPI_INT, 0, MPI_COMM_WORLD);
+#ifdef DEBUG
+    if (my_pid != 0) {
+        printf("proc %d: ", my_pid);
+        for (idx_t i = 0; i < num_levs - 1; i++) printf("%d ", prolong_types[i]);
+        printf("\n");
+    }
+#endif
+    MPI_Bcast(coarse_op_types.data(), num_levs - 1, MPI_INT, 0, MPI_COMM_WORLD);
+#ifdef DEBUG
+    if (my_pid != 0) {
+        printf("proc %d: ", my_pid);
+        for (idx_t i = 0; i < num_levs - 1; i++) printf("%d ", coarse_op_types[i]);
+        printf("\n");
+    }
+#endif
+    MPI_Bcast(relax_types.data(), num_levs, MPI_INT, 0, MPI_COMM_WORLD);
+#ifdef DEBUG
+    if (my_pid != 0) {
+        printf("proc %d: ", my_pid);
+        for (idx_t i = 0; i < num_levs; i++) printf("%d ", relax_types[i]);
+        printf("\n");
+    }
+#endif
+    // 分配指针空间
     A_array_low = new par_structMatrix<idx_t, data_t, calc_t>* [num_levs];
     A_array_high= new par_structMatrix<idx_t, calc_t, calc_t>* [num_levs];
     U_array = new par_structVector<idx_t, calc_t>* [num_levs];
@@ -225,61 +303,125 @@ void GeometricMultiGrid<idx_t, data_t, calc_t>::Setup(const par_structMatrix<idx
         gy = A_array_high[ilev - 1]->local_matrix->local_y * num_procs[0]; // global_size_y
         gz = A_array_high[ilev - 1]->local_matrix->local_z * num_procs[2]; // global_size_z
 
+#ifdef CROSS_POLAR
+        const bool periodic[3] = {true , true , false};// 虽然y方向不是严格的周期，但为计算粗化后的格点数，当成周期的
+#else
         const bool periodic[3] = {false, false, false};// {x, y, z}三个方向的周期性
-        if (coarse_op_types[ilev - 1] == DISCRETIZED) {
-            assert(coarsen_types[ilev - 1] == SEMI_XY);
-            XY_semi_coarsen(*U_array[ilev - 1], periodic, coar_to_fine_maps[ilev - 1]);
-        }
-        else if (coarse_op_types[ilev - 1] == GALERKIN) {
-            assert(coarsen_types[ilev - 1] == STANDARD);
+#endif
+
+        const COARSEN_TYPE & shrk_type = coarsen_types[ilev - 1];// grid-shrink type 网格缩小的类型，三维或二维
+        if (shrk_type == FULL_XYZ) {// 三维全粗化
             XYZ_standard_coarsen(*U_array[ilev - 1], periodic, coar_to_fine_maps[ilev - 1]);
         }
+        else if (shrk_type == SEMI_XY) {// 二维半粗化，只粗化XY面
+            XY_semi_coarsen     (*U_array[ilev - 1], periodic, coar_to_fine_maps[ilev - 1]);
+        }
+        else if (shrk_type == DECP_XZ) {// 解耦后做二维粗化，只粗化XZ面
+            XZ_decp_coarsen     (*U_array[ilev - 1], periodic, coar_to_fine_maps[ilev - 1], 2, 0, gz%2);
+        }
         else {
-            if (my_pid == 0) printf("Invalid coarsen operator types of %d\n", coarse_op_types[ilev - 1]);
+            if (my_pid == 0) printf("Invalid coarsen types of %d\n", shrk_type);
             MPI_Abort(comm, -1000);
+        }
+        if (my_pid == 0) {
+            printf("coarsen base idx: x %d y %d z %d\n", coar_to_fine_maps[ilev - 1].fine_base_idx[0],
+                coar_to_fine_maps[ilev - 1].fine_base_idx[1], coar_to_fine_maps[ilev - 1].fine_base_idx[2]);
+        }
+
+        // 做一些相容性检查
+        idx_t new_gx, new_gy, new_gz;
+        const RSTR_PRLG_TYPE& rstr_type = restrict_types[ilev - 1], & prlg_type = prolong_types [ilev - 1];
+        const idx_t* strides = coar_to_fine_maps[ilev - 1].stride;
+        if (rstr_type == Vtx_2d9_OpDep || rstr_type == Vtx_2d9 || rstr_type == Vtx_2d5 || rstr_type == Vtx_inject) {
+            assert(shrk_type != FULL_XYZ);
+            // vertex-center类型的粗化应该避开边界，细层某维若为偶数，则必须要为周期性
+            if (shrk_type == SEMI_XY) {
+                assert((gx % strides[0] == 1) || periodic[0]); assert((gy % strides[1] == 1) || periodic[1]); assert(strides[2] == 1);
+            }
+            else if (shrk_type == DECP_XZ) {
+                assert((gx % strides[0] == 1) || periodic[0]); assert(strides[1] == 1); assert((gz % strides[2] == 1) || periodic[2]); 
+            }
+            assert(prlg_type == rstr_type);// vertex类型的限制和插值应该是对称的
+        }
+        else if (rstr_type == Cell_2d4 || rstr_type == Cell_2d16) {
+            assert(prlg_type == Cell_2d4 || prlg_type == Cell_2d16);// cell类型的插值和限制可不对称，但应该同为cell类型
+            assert(shrk_type != FULL_XYZ);
+            // cell-center类型的粗化要求细网格各维均为偶数
+            if (shrk_type == SEMI_XY) {
+                assert(gx % strides[0] == 0); assert(gy % strides[1] == 0); assert(strides[2] == 1);
+            }
+            else if (shrk_type == DECP_XZ) {
+                assert(gx % strides[0] == 0); assert(strides[1] == 1); assert(gz % strides[2] == 0);
+            }
+        }
+        else if (rstr_type == Cell_3d8 || rstr_type == Cell_3d64) {
+            assert(prlg_type == Cell_3d8 || prlg_type == Cell_3d64);
+            assert(shrk_type == FULL_XYZ);
+            assert(gx % strides[0] == 0); assert(gy % strides[1] == 0); assert(gz % strides[2] == 0);
         }
 
         // 根据粗化步长和偏移计算出下一（粗）层的大小
-        idx_t new_gx = gx / coar_to_fine_maps[ilev - 1].stride[0];
-        idx_t new_gy = gy / coar_to_fine_maps[ilev - 1].stride[1];
-        idx_t new_gz = gz / coar_to_fine_maps[ilev - 1].stride[2];
+        new_gx = gx / strides[0];
+        new_gy = gy / strides[1];
+        new_gz = gz / strides[2];
+        U_array     [ilev] = new par_structVector<idx_t,         calc_t>(comm,     new_gx, new_gy, new_gz,
+            num_procs[1], num_procs[0], num_procs[2], true);
 
-        A_array_high[ilev] = Galerkin_RAP_3d(restrict_types[ilev - 1], *A_array_high[ilev - 1], prolong_types[ilev - 1], 
-            coar_to_fine_maps[ilev - 1]);
-        assert(A_array_high[ilev]->input_dim[0] == new_gx && A_array_high[ilev]->input_dim[1] == new_gy
-            && A_array_high[ilev]->input_dim[2] == new_gz );
+        // 建立限制和插值算子
+        R_ops[ilev - 1] = new Restrictor<idx_t, calc_t>(rstr_type, coarse_op_types[ilev - 1] == DISCRETIZED);// 注意Galerkin方法所用的限制算子
+        switch (rstr_type)
+        {
+        case Vtx_inject : if (my_pid == 0) printf("  using Vtx_inject restriction of %d-th to %d-th lev\n", ilev-1, ilev); break;
+        case Vtx_2d5    : if (my_pid == 0) printf("  using Vtx_2d5 restriction of %d-th to %d-th lev\n", ilev-1, ilev); break;
+        case Vtx_2d9    : if (my_pid == 0) printf("  using Vtx_2d9 restriction of %d-th to %d-th lev\n", ilev-1, ilev); break;
+        case Vtx_2d9_OpDep: if (my_pid == 0) printf("  using Vtx_2d9_OpDep restriction of %d-th to %d-th lev\n", ilev-1, ilev);
+            // 需要传递细网格A矩阵来计算限制矩阵的值
+            R_ops[ilev - 1]->setup_operator(*A_array_high[ilev - 1], *U_array[ilev-1], *U_array[ilev], coar_to_fine_maps[ilev-1]);
+            break;
+        case Cell_2d4   : if (my_pid == 0) printf("  using Cell_2d4   restriction of %d-th to %d-th lev\n", ilev-1, ilev); break;
+        case Cell_2d16  : if (my_pid == 0) printf("  using Cell_2d16  restriction of %d-th to %d-th lev\n", ilev-1, ilev); break;
+        case Cell_3d8   : if (my_pid == 0) printf("  using Cell_3d8   restriction of %d-th to %d-th lev\n", ilev-1, ilev); break;
+        case Cell_3d64  : if (my_pid == 0) printf("  using Cell_3d64  restriction of %d-th to %d-th lev\n", ilev-1, ilev); break;
+        default: if (my_pid == 0) printf("Error while setting restrictor: INVALID restrict type of %d\n", rstr_type); MPI_Abort(MPI_COMM_WORLD, -201);
+        }
         
-        U_array     [ilev] = new par_structVector<idx_t,         calc_t>
-            (comm,     new_gx, new_gy, new_gz, num_procs[1], num_procs[0], num_procs[2], A_array_high[ilev]->num_diag != 7);
+        P_ops[ilev - 1] = new Interpolator<idx_t, calc_t>(prlg_type);
+        switch (prlg_type)
+        {
+        case Vtx_inject : if (my_pid == 0) printf("  using Vtx_inject interpolation of %d-th to %d-th lev\n", ilev-1, ilev); break;
+        case Vtx_2d5    : if (my_pid == 0) printf("  using Vtx_2d5 interpolation of %d-th to %d-th lev\n", ilev-1, ilev); break;
+        case Vtx_2d9    : if (my_pid == 0) printf("  using Vtx_2d9 interpolation of %d-th to %d-th lev\n", ilev-1, ilev); break;
+        case Vtx_2d9_OpDep: if (my_pid == 0) printf("  using Vtx_2d9_OpDep interpolation of %d-th to %d-th lev\n", ilev-1, ilev);
+            assert(rstr_type == Vtx_2d9_OpDep);
+            P_ops[ilev - 1]->setup_operator(*(R_ops[ilev - 1]->Rmat));
+            break;
+        case Cell_2d4   : if (my_pid == 0) printf("  using Cell_2d4  interpolation of %d-th to %d-th lev\n", ilev-1, ilev); break;
+        case Cell_2d16  : if (my_pid == 0) printf("  using Cell_2d16 interpolation of %d-th to %d-th lev\n", ilev-1, ilev); break;
+        case Cell_3d8   : if (my_pid == 0) printf("  using Cell_3d8  interpolation of %d-th to %d-th lev\n", ilev-1, ilev); break;
+        case Cell_3d64  : if (my_pid == 0) printf("  using Cell_3d64 interpolation of %d-th to %d-th lev\n", ilev-1, ilev); break;
+        default: if (my_pid == 0) printf("Error while setting interpolator: INVALID prolong type of %d\n", prlg_type); MPI_Abort(MPI_COMM_WORLD, -202);
+        }
+
+        // 构造粗网格矩阵
+        if (coarse_op_types[ilev - 1] == DISCRETIZED) {
+            assert(shrk_type == SEMI_XY);
+            A_array_high[ilev] = new par_structMatrix<idx_t, calc_t, calc_t>(comm, A_problem.num_diag, 
+                new_gx, new_gy, new_gz, num_procs[1], num_procs[0], num_procs[2]);
+            A_array_high[ilev]->read_data(mat_repo + "/" + std::to_string(new_gx) + "x" + std::to_string(new_gy) + "x" + std::to_string(new_gz));
+        }
+        else if (coarse_op_types[ilev - 1] == GALERKIN) {
+            A_array_high[ilev] = Galerkin_RAP(*R_ops[ilev - 1], *A_array_high[ilev - 1], *P_ops[ilev - 1], 
+                coar_to_fine_maps[ilev - 1]);
+            assert(A_array_high[ilev]->input_dim[0] == new_gx
+                && A_array_high[ilev]->input_dim[1] == new_gy && A_array_high[ilev]->input_dim[2] == new_gz );
+        }
+        
 #ifdef DEBUG // 将粗层网格打印出来观察一下
         A_array_high[ilev]->write_data(".", std::to_string(ilev));
 #endif
 
         F_array[ilev] = new par_structVector<idx_t, calc_t>(*U_array[ilev]);
         aux_arr[ilev] = new par_structVector<idx_t, calc_t>(*U_array[ilev]);
-
-        // 建立层间转移的限制和插值算子，并逐层使用Galerkin方法生成粗层算子
-        switch (restrict_types[ilev - 1])
-        {
-        case Rst_4cell : if (my_pid == 0) printf("  using  4-cell restriction of %d-th to %d-th lev\n", ilev-1, ilev); break;
-        case Rst_8cell : if (my_pid == 0) printf("  using  8-cell restriction of %d-th to %d-th lev\n", ilev-1, ilev); break;
-        case Rst_64cell: if (my_pid == 0) printf("  using 64-cell restriction of %d-th to %d-th lev\n", ilev-1, ilev); break;
-        default:
-            if (my_pid == 0) printf("Error while setting restrictor: INVALID restrict type of %d\n", restrict_types[ilev - 1]);
-            MPI_Abort(MPI_COMM_WORLD, -201);
-        }
-        R_ops[ilev - 1] = new Restrictor<idx_t, calc_t>(restrict_types[ilev - 1]);// 注意Galerkin方法所用的限制算子
-
-        switch (prolong_types[ilev - 1])
-        {
-        case Plg_linear_4cell : if (my_pid == 0) printf("  using  4-cell linear interpolation of %d-th to %d-th lev\n", ilev-1, ilev); break;
-        case Plg_linear_8cell : if (my_pid == 0) printf("  using  8-cell linear interpolation of %d-th to %d-th lev\n", ilev-1, ilev); break;
-        case Plg_linear_64cell: if (my_pid == 0) printf("  using 64-cell linear interpolation of %d-th to %d-th lev\n", ilev-1, ilev); break;
-        default:
-            if (my_pid == 0) printf("Error while setting interpolator: INVALID prolong type of %d\n", prolong_types[ilev - 1]);
-            MPI_Abort(MPI_COMM_WORLD, -202);
-        }
-        P_ops[ilev - 1] = new Interpolator<idx_t, calc_t>(prolong_types[ilev - 1]);
 
         if (my_pid == 0) {
             printf("  lev #%d : global %4d x %4d x %4d local %3d x %3d x %3d\n", ilev, 
@@ -446,14 +588,14 @@ void GeometricMultiGrid<idx_t, data_t, calc_t>::V_Cycle(const par_structVector<i
     // 除了最粗层，都能从细往粗走
     for ( ; i < num_levs - 1; i++) {
         // double ck_dot = vec_dot<idx_t, calc_t, double>(*F_array[i], *F_array[i]);
-        // printf("before smth%d (f,f) = %.10e\n", i, ck_dot);
+        // if (my_pid == 0) printf("before smth%d (f,f) = %.10e\n", i, ck_dot);
 
         for (idx_t j = 0; j < num_grid_sweeps[0]; j++)
             // 当前层对残差做平滑（对应前平滑），平滑后结果在U_array中：相当于在当前层解一次Mu=f
             smoother[i]->Mult(*F_array[i], *U_array[i], this->zero_guess && j == 0);
         
         // ck_dot = vec_dot<idx_t, calc_t, double>(*U_array[i], *U_array[i]);
-        // printf("after  smth%d (u,u) = %.10e\n", i, ck_dot);
+        // if (my_pid == 0) printf("after  smth%d (u,u) = %.10e\n", i, ck_dot);
         
         // 计算在当前层平滑后的残差
         if constexpr (sizeof(data_t) == sizeof(calc_t))
@@ -470,7 +612,7 @@ void GeometricMultiGrid<idx_t, data_t, calc_t>::V_Cycle(const par_structVector<i
     }
 
     // double ck_dot = vec_dot<idx_t, calc_t, double>(*F_array[i], *F_array[i]);
-    // printf("before smth%d (f,f) = %.10e\n", i, ck_dot);
+    // if (my_pid == 0) printf("before smth%d (f,f) = %.10e\n", i, ck_dot);
 
     assert(i == num_levs - 1);// 最粗层做前平滑
     if (relax_types[i] == GaussElim) {// 直接法只做一次
@@ -487,7 +629,7 @@ void GeometricMultiGrid<idx_t, data_t, calc_t>::V_Cycle(const par_structVector<i
     }
 
     // ck_dot = vec_dot<idx_t, calc_t, double>(*U_array[i], *U_array[i]);
-    // printf("after  smth%d (u,u) = %.10e\n", i, ck_dot);
+    // if (my_pid == 0) printf("after  smth%d (u,u) = %.10e\n", i, ck_dot);
 
     // 除了最细层，都能从粗往细走
     for ( ; i >= 1; i--) {
