@@ -48,6 +48,14 @@ public:
     idx_t slice_dk_size;
     idx_t slice_dki_size;
 
+#ifdef COMPRESS
+    // 是否沿x方向压缩数据
+    bool compressed = false;
+    // 沿x方向将矩阵数据从[num_diag, halo_z*2 + local_z, halo_x*2 + local_x, halo_y*2 + local_y] (从内到外)
+    // 压缩成[num_diag, halo_z*2 + local_z, 1, halo_y*2 + local_y]
+    void compress();
+#endif
+
     seq_structMatrix(idx_t num_d, idx_t lx, idx_t ly, idx_t lz, idx_t hx, idx_t hy, idx_t hz);
     // 拷贝构造函数，开辟同样规格的data
     seq_structMatrix(const seq_structMatrix & model);
@@ -413,6 +421,9 @@ seq_structMatrix<idx_t, data_t, calc_t>::seq_structMatrix(const seq_structMatrix
     data = new data_t[num_diag * tot_x * tot_y * tot_z];
     spmv = model.spmv;
     spmv_scaled = model.spmv_scaled;
+#ifdef COMPRESS
+    compressed = model.compressed;
+#endif
 }
 
 template<typename idx_t, typename data_t, typename calc_t>
@@ -436,12 +447,55 @@ void seq_structMatrix<idx_t, data_t, calc_t>::print_level_diag(idx_t ilev, idx_t
     }
 }
 
+#ifdef COMPRESS
+template<typename idx_t, typename data_t, typename calc_t>
+void seq_structMatrix<idx_t, data_t, calc_t>::compress()
+{
+    assert(sizeof(data_t) > 2);// 不要试图对半精度数据压缩，而应是高精度压缩完再截断成半精度
+    assert(!compressed);
+    assert(data);
+    const idx_t new_tot = num_diag * 1 * (local_y + 2 * halo_y) * (local_z + 2 * halo_z);
+    const idx_t new_slice_dki_size = slice_dk_size * 1;// 新的halo_x=0，local_x=1
+    data_t * new_data = new data_t [new_tot];
+    const idx_t jbeg = 0, jend = jbeg + local_y + halo_y * 2,
+                ibeg = 0, iend = ibeg + local_x + halo_x * 2,
+                kbeg = 0, kend = kbeg + local_z + halo_z * 2;
+    #pragma omp parallel for collapse(2) schedule(static)
+    for (idx_t j = jbeg; j < jend; j++)
+    for (idx_t k = kbeg; k < kend; k++) {
+        calc_t avg[num_diag];
+        for (idx_t d = 0; d < num_diag; d++)
+            avg[d] = 0.0;
+        
+        for (idx_t i = ibeg; i < iend; i++)
+        for (idx_t d = 0; d < num_diag; d++)
+            avg[d] += data[j * slice_dki_size + i * slice_dk_size + k * num_diag + d];
+        
+        for (idx_t d = 0; d < num_diag; d++) {
+            avg[d] /= (iend - ibeg);
+            new_data[j * new_slice_dki_size + 0 * slice_dk_size + k * num_diag + d] = avg[d];
+        }
+    }// j & k loop
+    // 更新数据大小
+    halo_x = 0;
+    local_x = 1;
+    slice_dki_size = new_slice_dki_size;
+    delete data;// 释放原有内存
+    data = new_data;// 指向新的数据位置
+    compressed = true;
+}
+#endif
+
 template<typename idx_t, typename data_t, typename calc_t>
 void seq_structMatrix<idx_t, data_t, calc_t>::Mult(
     const seq_structVector<idx_t, calc_t> & x, seq_structVector<idx_t, calc_t> & y,
     const seq_structVector<idx_t, calc_t> * sqrtD_ptr) const
 {
+#ifdef COMPRESS
+    if (!compressed) CHECK_LOCAL_HALO(*this, x);
+#else
     CHECK_LOCAL_HALO(*this, x);
+#endif
     CHECK_LOCAL_HALO(x , y);
     const data_t* mat_data = data, 
                 * aux_data = (sqrtD_ptr) ? sqrtD_ptr->data : nullptr;
@@ -452,16 +506,20 @@ void seq_structMatrix<idx_t, data_t, calc_t>::Mult(
     const calc_t * x_data = x.data;
     calc_t * y_data = y.data;
 
-    idx_t   ibeg = halo_x, iend = ibeg + local_x,
-            jbeg = halo_y, jend = jbeg + local_y,
-            kbeg = halo_z, kend = kbeg + local_z;
+    idx_t   ibeg = x.halo_x, iend = ibeg + x.local_x,// 不管有无压缩矩阵数据都能用
+            jbeg = x.halo_y, jend = jbeg + x.local_y,
+            kbeg = x.halo_z, kend = kbeg + x.local_z;
     idx_t vec_k_size = x.slice_k_size, vec_ki_size = x.slice_ki_size;
     const idx_t col_height = kend - kbeg;
 
     #pragma omp parallel for collapse(2) schedule(static)
     for (idx_t j = jbeg; j < jend; j++)
     for (idx_t i = ibeg; i < iend; i++) {
+#ifdef COMPRESS
+        const data_t * A_jik = mat_data + j * slice_dki_size + (compressed ? 0 : i * slice_dk_size) + kbeg * num_diag;
+#else
         const data_t * A_jik = mat_data + j * slice_dki_size + i * slice_dk_size + kbeg * num_diag;
+#endif
         const idx_t vec_off = j * vec_ki_size + i * vec_k_size + kbeg;
         const data_t * aux_jik = (sqrtD_ptr) ? (aux_data + vec_off) : nullptr;
         const calc_t * x_jik = x_data + vec_off;

@@ -17,6 +17,9 @@ public:
     }
 
     virtual void SetOperator(const Operator<idx_t, calc_t, calc_t> & op) {
+#ifdef COMPRESS
+        assert(((const par_structMatrix<idx_t, calc_t, calc_t>&)op).compressed == false);// 暂时先不处理PlaneSolver等的压缩情况
+#endif
         oper = & op;
 
         this->input_dim[0] = op.input_dim[0];

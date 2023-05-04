@@ -28,6 +28,7 @@ public:
     }
 
     virtual void SetOperator(const Operator<idx_t, calc_t, calc_t> & op) {
+        // 即使传进来的A已经做了数据压缩，也可以照常进行
         oper = & op;
 
         this->input_dim[0] = op.input_dim[0];

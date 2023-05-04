@@ -194,6 +194,16 @@ par_structMatrix<idx_t, data_t, data_t> * Galerkin_RAP(const Restrictor<idx_t, d
                         hx, hy, hz, info.fine_base_idx[0], info.fine_base_idx[1], info.fine_base_idx[2]
                     );
                 }
+                else if (fine_mat_local->num_diag == 27) {
+                    if (my_pid == 0) printf("  using \033[1;35mRVtx2d9_A3d27_PVtx2d9\033[0m...\n");
+                    RVtx2d9_A3d27_PVtx2d9(
+                        fine_mat_local->data, f_lx+2*hx, f_ly+2*hy, f_lz+2*hz,
+                        coar_mat_local->data, c_lx+2*hx, c_ly+2*hy, c_lz+2*hz,
+                        hx, hx + c_lx,   hy, hy + c_ly,   hz, hz + c_lz,
+                        x_lbdr, x_ubdr, y_lbdr, y_ubdr, z_lbdr, z_ubdr,
+                        hx, hy, hz, info.fine_base_idx[0], info.fine_base_idx[1], info.fine_base_idx[2]
+                    );
+                }
                 else MPI_Abort(MPI_COMM_WORLD, -808);
             }
             else {// Vtx_2d9_OpDep

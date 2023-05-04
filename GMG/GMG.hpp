@@ -442,6 +442,12 @@ void GeometricMultiGrid<idx_t, data_t, calc_t>::Setup(const par_structMatrix<idx
         }
     }
 
+#ifdef COMPRESS
+    if (my_pid == 0) printf("Warning: GMG compress data of A along x\n");
+    for (idx_t ilev = 0; ilev < num_levs; ilev++) {
+        A_array_high[ilev]->compress();// try to average along x-direction
+    }
+#endif
     // 如有必要，截断A矩阵
     if constexpr (sizeof(data_t) != sizeof(calc_t)) {
         assert(sizeof(data_t) < sizeof(calc_t));

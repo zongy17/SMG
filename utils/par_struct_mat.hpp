@@ -29,6 +29,14 @@ public:
     StructCommPackage * comm_pkg = nullptr;
     bool own_comm_pkg = false;
 
+#ifdef COMPRESS
+    // 是否沿x方向压缩数据
+    bool compressed = false;
+    // 沿x方向将矩阵数据从[num_diag, halo_z*2 + local_z, halo_x*2 + local_x, halo_y*2 + local_y] (从内到外)
+    // 压缩成[num_diag, halo_z*2 + local_z, 1, halo_y*2 + local_y]
+    void compress(); 
+#endif
+
     par_structMatrix(MPI_Comm comm, idx_t num_d, idx_t gx, idx_t gy, idx_t gz, idx_t num_proc_x, idx_t num_proc_y, idx_t num_proc_z);
     // 按照model的规格生成一个结构化向量，浅拷贝通信包
     par_structMatrix(const par_structMatrix & model);
@@ -164,6 +172,9 @@ par_structMatrix<idx_t, data_t, calc_t>::par_structMatrix(const par_structMatrix
     own_comm_pkg = false;
     SOA_spmv = model.SOA_spmv;
     stencil = model.stencil;
+#ifdef COMPRESS
+    compressed = model.compressed;
+#endif
 }
 
 template<typename idx_t, typename data_t, typename calc_t>
@@ -408,9 +419,15 @@ template<typename idx_t, typename data_t, typename calc_t>
 void par_structMatrix<idx_t, data_t, calc_t>::Mult(const par_structVector<idx_t, calc_t> & x, par_structVector<idx_t, calc_t> & y,
     bool use_zero_guess/* ignored */) const
 {
+#ifdef COMPRESS
+    assert(((this->input_dim[0] == x.global_size_x && this->output_dim[0] == y.global_size_x) || compressed) &&
+            this->input_dim[1] == x.global_size_y && this->output_dim[1] == y.global_size_y &&
+            this->input_dim[2] == x.global_size_z && this->output_dim[2] == y.global_size_z    );
+#else
     assert( this->input_dim[0] == x.global_size_x && this->output_dim[0] == y.global_size_x &&
             this->input_dim[1] == x.global_size_y && this->output_dim[1] == y.global_size_y &&
             this->input_dim[2] == x.global_size_z && this->output_dim[2] == y.global_size_z    );
+#endif
 
     // lazy halo updated: only done when needed 
     x.update_halo();
@@ -458,7 +475,11 @@ void par_structMatrix<idx_t, data_t, calc_t>::Mult(const par_structVector<idx_t,
 template<typename idx_t, typename data_t, typename calc_t>
 void par_structMatrix<idx_t, data_t, calc_t>::SOA_Mult(const seq_structVector<idx_t, calc_t> & x, seq_structVector<idx_t, calc_t> & y) const
 {
+#ifdef COMPRESS
+    if (!compressed) CHECK_LOCAL_HALO(*local_matrix, x);
+#else
     CHECK_LOCAL_HALO(*local_matrix, x);
+#endif
     CHECK_LOCAL_HALO(x , y);
     assert(DiagGroups_separated);
     void (*kernel)(const idx_t, const idx_t, const idx_t, const data_t**, const calc_t*, calc_t*, const calc_t*)
@@ -486,12 +507,28 @@ void par_structMatrix<idx_t, data_t, calc_t>::SOA_Mult(const seq_structVector<id
             for (idx_t g = 0; g < DiagGroups_cnt; g++)
                 // A_jik[g] = DG_data[g] + j * slice_dki[g]
                 //     + i * slice_dk[g] + kbeg * nd[g];
+#ifdef COMPRESS
+                A_jik[g] = DiagGroups[g]->data + j * DiagGroups[g]->slice_dki_size
+                        + (compressed ? 0 : i * DiagGroups[g]->slice_dk_size) + kbeg * DiagGroups[g]->num_diag;
+#else
                 A_jik[g] = DiagGroups[g]->data + j * DiagGroups[g]->slice_dki_size
                         + i * DiagGroups[g]->slice_dk_size + kbeg * DiagGroups[g]->num_diag;
+#endif
             kernel(col_height, vec_k_size, vec_ki_size, A_jik, x_jik, y_jik, sqD_jik);
         }
     }
 }
+
+#ifdef COMPRESS
+template<typename idx_t, typename data_t, typename calc_t>
+void par_structMatrix<idx_t, data_t, calc_t>::compress()
+{
+    assert(!compressed);
+    assert(sizeof(data_t) == sizeof(calc_t));// 只有高精度矩阵才能直接压缩
+    local_matrix->compress();
+    compressed = true;
+}
+#endif
 
 template<typename idx_t, typename data_t, typename calc_t>
 void par_structMatrix<idx_t, data_t, calc_t>::read_data(const std::string pathname) {
@@ -723,7 +760,11 @@ void par_structMatrix<idx_t, data_t, calc_t>::separate_truncate_Diags(const seq_
 {
     assert(DiagGroups_separated == false && DiagGroups == nullptr);
     assert(A_high.num_diag == num_diag);
+#ifdef COMPRESS
+    if (!A_high.compressed) CHECK_LOCAL_HALO(A_high, *local_matrix);
+#else
     CHECK_LOCAL_HALO(A_high, *local_matrix);
+#endif
     DiagGroups_cnt = num_diag / NEON_MAX_STRIDE;// number of groups
     idx_t last_group = num_diag - NEON_MAX_STRIDE * DiagGroups_cnt;
     if (last_group > 0) DiagGroups_cnt ++;// additional group to contain remaining diags
@@ -765,6 +806,9 @@ void par_structMatrix<idx_t, data_t, calc_t>::separate_truncate_Diags(const seq_
     if (num_diag == 7) assert(DiagGroups_cnt == 2);
     else if (num_diag == 19) assert(DiagGroups_cnt == 5);
     else if (num_diag == 27) assert(DiagGroups_cnt == 7);
+#ifdef COMPRESS
+    compressed = A_high.compressed;
+#endif
 }
 
 template<typename idx_t, typename data_t, typename calc_t>

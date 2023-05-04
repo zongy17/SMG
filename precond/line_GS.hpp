@@ -20,6 +20,9 @@ public:
 	// AOS => SOA
 	void separate_diags();
 
+#ifdef COMPRESS
+	bool compressed = false;
+#endif
 	void (*AOS_forward_zero)
         (const idx_t, const idx_t, const idx_t, const data_t*, const data_t*, const calc_t*, const calc_t*, const calc_t*, calc_t*) = nullptr;
     void (*AOS_backward_zero)
@@ -73,6 +76,9 @@ public:
 		}
     }
 	void post_setup() {
+#ifdef COMPRESS
+		compressed = ((const par_structMatrix<idx_t, calc_t, calc_t>*)this->oper)->compressed;
+#endif
 		const idx_t num_diag = ((const par_structMatrix<idx_t, calc_t, calc_t>*)this->oper)->num_diag;
 		if constexpr (sizeof(calc_t) != sizeof(data_t) && sizeof(data_t) == 2) {
 #ifdef __aarch64__
@@ -298,7 +304,7 @@ void LineGS<idx_t, data_t, calc_t>::AOS_ForwardPass(const par_structVector<idx_t
 	const par_structMatrix<idx_t, calc_t, calc_t> * par_A = (par_structMatrix<idx_t, calc_t, calc_t>*)(this->oper);
 	CHECK_LOCAL_HALO(x_vec, b_vec);
 	assert(LU_separated);
-	const idx_t local_x = x_vec.local_x;
+	const idx_t local_x = L->local_x;// 不管有无压缩矩阵数据都能用
     const calc_t * b_data = b_vec.data;
           calc_t * x_data = x_vec.data;
 
@@ -361,14 +367,22 @@ void LineGS<idx_t, data_t, calc_t>::AOS_ForwardPass(const par_structVector<idx_t
 					idx_t i_lev = istart_lev + it * slope;
 					idx_t j = jbeg + j_lev, i = ibeg + i_lev;// 用于数组选址计算的下标
 					idx_t i_to_wait = (i == iend - 1) ? i_lev : (i_lev + wait_offi);
+#ifdef COMPRESS
+					const idx_t mat_off = j * slice_dki_size + (compressed ? 0 : i * slice_dk_size) + kbeg * num_diag;
+#else
 					const idx_t mat_off = j * slice_dki_size + i * slice_dk_size + kbeg * num_diag;
+#endif
 					const data_t* L_jik = L_data + mat_off,
 								* U_jik = (U_data) ? (U_data + mat_off) : nullptr;
 					const idx_t vec_off = j * vec_ki_size + i * vec_k_size + kbeg;
 					calc_t * x_jik = x_data + vec_off;
 					const calc_t * b_jik = b_data + vec_off;
 					const calc_t * sqD_jik = sqD_data ? sqD_data + vec_off : sqD_buf;
+#ifdef COMPRESS
+					idx_t sid = local_x * (j - jbeg) + (compressed ? 0 : i - ibeg);
+#else
 					idx_t sid = local_x * (j - jbeg) + i - ibeg;
+#endif
 					// 线程边界处等待
 					if (it == t_beg) while ( __atomic_load_n(&flag[j_lev+1], __ATOMIC_ACQUIRE) < i_lev - 1) {  } // 只需检查W依赖
 					if (it == t_end - 1) while (__atomic_load_n(&flag[j_lev  ], __ATOMIC_ACQUIRE) < i_to_wait) {  }
@@ -392,14 +406,22 @@ void LineGS<idx_t, data_t, calc_t>::AOS_ForwardPass(const par_structVector<idx_t
 		#pragma omp for collapse(2) schedule(static)
 		for (idx_t j = jbeg; j < jend; j++)
 		for (idx_t i = ibeg; i < iend; i++) {
+#ifdef COMPRESS
+			const idx_t mat_off = j * slice_dki_size + (compressed ? 0 : i * slice_dk_size) + kbeg * num_diag;
+#else
 			const idx_t mat_off = j * slice_dki_size + i * slice_dk_size + kbeg * num_diag;
+#endif
 			const data_t* L_jik = L_data + mat_off,
 						* U_jik = (U_data) ? (U_data + mat_off) : nullptr;
 			const idx_t vec_off = j * vec_ki_size + i * vec_k_size + kbeg;
 			calc_t * x_jik = x_data + vec_off;
 			const calc_t * b_jik = b_data + vec_off;
 			const calc_t * sqD_jik = sqD_data ? sqD_data + vec_off : sqD_buf;
-			idx_t sid = local_x * (j - jbeg) + i - ibeg;
+#ifdef COMPRESS
+					idx_t sid = local_x * (j - jbeg) + (compressed ? 0 : i - ibeg);
+#else
+					idx_t sid = local_x * (j - jbeg) + i - ibeg;
+#endif
 
 			kernel(col_height, vec_k_size, vec_ki_size, L_jik, U_jik, b_jik, x_jik, sqD_jik, rhs);
 			this->tri_solver[sid]->Solve(rhs, sol);// 注意这个偏移！！kbeg == 1
@@ -417,7 +439,7 @@ void LineGS<idx_t, data_t, calc_t>::AOS_BackwardPass(const par_structVector<idx_
 	const par_structMatrix<idx_t, calc_t, calc_t> * par_A = (par_structMatrix<idx_t, calc_t, calc_t>*)(this->oper);
 	CHECK_LOCAL_HALO(x_vec, b_vec);
 	assert(LU_separated);
-	const idx_t local_x = x_vec.local_x;
+	const idx_t local_x = U->local_x;// 不管有无压缩矩阵数据都能用
     const calc_t * b_data = b_vec.data;
           calc_t * x_data = x_vec.data;
 
@@ -480,14 +502,22 @@ void LineGS<idx_t, data_t, calc_t>::AOS_BackwardPass(const par_structVector<idx_
 					idx_t i_lev = istart_lev + it * slope;
 					idx_t j = jbeg + j_lev, i = ibeg + i_lev;// 用于数组选址计算的下标
 					idx_t i_to_wait = (i == ibeg) ? i_lev : (i_lev + wait_offi);
+#ifdef COMPRESS
+					const idx_t mat_off = j * slice_dki_size + (compressed ? 0 : i * slice_dk_size) + kbeg * num_diag;
+#else
 					const idx_t mat_off = j * slice_dki_size + i * slice_dk_size + kbeg * num_diag;
+#endif
 					const data_t* U_jik = U_data + mat_off,
 								* L_jik = (L_data) ? (L_data + mat_off) : nullptr;
 					const idx_t vec_off = j * vec_ki_size + i * vec_k_size + kbeg;
 					calc_t * x_jik = x_data + vec_off;
 					const calc_t * b_jik = b_data + vec_off;
 					const calc_t * sqD_jik = sqD_data ? sqD_data + vec_off : sqD_buf;
+#ifdef COMPRESS
+					idx_t sid = local_x * (j - jbeg) + (compressed ? 0 : i - ibeg);
+#else
 					idx_t sid = local_x * (j - jbeg) + i - ibeg;
+#endif
 					// 线程边界处等待
 					if (it == t_beg) while ( __atomic_load_n(&flag[j_lev+1], __ATOMIC_ACQUIRE) > i_to_wait) {  }
 					if (it == t_end - 1) while (__atomic_load_n(&flag[j_lev  ], __ATOMIC_ACQUIRE) > i_lev + 1) {  }
@@ -511,14 +541,22 @@ void LineGS<idx_t, data_t, calc_t>::AOS_BackwardPass(const par_structVector<idx_
 		#pragma omp for collapse(2) schedule(static)
 		for (idx_t j = jend - 1; j >= jbeg; j--)
 		for (idx_t i = iend - 1; i >= ibeg; i--) {
-			const idx_t mat_off = j * slice_dki_size + i * slice_dk_size + kbeg * num_diag;
+#ifdef COMPRESS
+					const idx_t mat_off = j * slice_dki_size + (compressed ? 0 : i * slice_dk_size) + kbeg * num_diag;
+#else
+					const idx_t mat_off = j * slice_dki_size + i * slice_dk_size + kbeg * num_diag;
+#endif
 			const data_t* U_jik = U_data + mat_off,
 						* L_jik = (L_data) ? (L_data + mat_off) : nullptr;
 			const idx_t vec_off = j * vec_ki_size + i * vec_k_size + kbeg;
 			calc_t * x_jik = x_data + vec_off;
 			const calc_t * b_jik = b_data + vec_off;
 			const calc_t * sqD_jik = sqD_data ? sqD_data + vec_off : sqD_buf;
-			idx_t sid = local_x * (j - jbeg) + i - ibeg;
+#ifdef COMPRESS
+					idx_t sid = local_x * (j - jbeg) + (compressed ? 0 : i - ibeg);
+#else
+					idx_t sid = local_x * (j - jbeg) + i - ibeg;
+#endif
 			kernel(col_height, vec_k_size, vec_ki_size, L_jik, U_jik, b_jik, x_jik, sqD_jik, rhs);
 			this->tri_solver[sid]->Solve(rhs, sol);
 			for (idx_t k = 0; k < col_height; k++) x_jik[k] = one_minus_weight * x_jik[k] + weight * sol[k] / sqD_jik[k];
@@ -544,6 +582,9 @@ void LineGS<idx_t, data_t, calc_t>::separate_LU() {
     L = new seq_structMatrix<idx_t, data_t, calc_t>( (mat.num_diag - diag_block_width) / 2, // 不包含对角线所在的一柱
                                             mat.local_x, mat.local_y, mat.local_z, mat.halo_x, mat.halo_y, mat.halo_z);
     U = new seq_structMatrix<idx_t, data_t, calc_t>(*L);
+#ifdef COMPRESS
+	L->compressed = U->compressed = compressed;
+#endif
 
     const idx_t jbeg = 0, jend = mat.local_y + 2 * mat.halo_y,
                 ibeg = 0, iend = mat.local_x + 2 * mat.halo_x,
@@ -786,6 +827,10 @@ void LineGS<idx_t, data_t, calc_t>::separate_diags() {
             G1_ptr[0] = aos_ptrs[6]; G1_ptr[1] = aos_ptrs[7]; G1_ptr[2] = aos_ptrs[8];
 		}
 	}
+#ifdef COMPRESS
+	for (idx_t g = 0; g < DiagGroups_cnt; g++)
+		DiagGroups[g]->compressed = compressed;
+#endif
 	DiagGroups_separated = true;
 }
 
@@ -797,7 +842,7 @@ void LineGS<idx_t, data_t, calc_t>::SOA_ForwardPass(const par_structVector<idx_t
 	const par_structMatrix<idx_t, calc_t, calc_t> * par_A = (par_structMatrix<idx_t, calc_t, calc_t>*)(this->oper);
 	CHECK_LOCAL_HALO(x_vec, b_vec);
 	assert(DiagGroups_separated);
-	const idx_t local_x = x_vec.local_x;
+	const idx_t local_x = DiagGroups[0]->local_x;// 不管有无压缩矩阵数据都能用
     const calc_t * b_data = b_vec.data;
           calc_t * x_data = x_vec.data;
 
@@ -865,13 +910,22 @@ void LineGS<idx_t, data_t, calc_t>::SOA_ForwardPass(const par_structVector<idx_t
 					const idx_t vec_off = j * vec_ki_size + i * vec_k_size + kbeg;
 					for (idx_t id = 0; id < num_arrs; id++) {
                         idx_t gid = beg_arrId + id;
+#ifdef COMPRESS
                         A_jik[id] = DiagGroups[gid]->data + j * DiagGroups[gid]->slice_dki_size
+                            + (compressed ? 0 : i * DiagGroups[gid]->slice_dk_size) + kbeg * DiagGroups[gid]->num_diag;
+#else
+						A_jik[id] = DiagGroups[gid]->data + j * DiagGroups[gid]->slice_dki_size
                             + i * DiagGroups[gid]->slice_dk_size + kbeg * DiagGroups[gid]->num_diag;
+#endif
                     }
 					const calc_t * b_jik = b_data + vec_off;
 					calc_t * x_jik = x_data + vec_off;
 					const calc_t * sqD_jik = sqD_data ? sqD_data + vec_off : sqD_buf;
+#ifdef COMPRESS
+					idx_t sid = local_x * (j - jbeg) + (compressed ? 0 : i - ibeg);
+#else
 					idx_t sid = local_x * (j - jbeg) + i - ibeg;
+#endif
 					TridiagSolver<idx_t, data_t, calc_t> * tridSolver = this->tri_solver[sid];
 					{// 预取本柱的三对角系数
 						__builtin_prefetch(tridSolver->Get_a(), 0, 0);
@@ -905,14 +959,23 @@ void LineGS<idx_t, data_t, calc_t>::SOA_ForwardPass(const par_structVector<idx_t
 			const idx_t vec_off = j * vec_ki_size + i * vec_k_size + kbeg;
 			for (idx_t id = 0; id < num_arrs; id++) {
 				idx_t gid = beg_arrId + id;
-				A_jik[id] = DiagGroups[gid]->data + j * DiagGroups[gid]->slice_dki_size
-					+ i * DiagGroups[gid]->slice_dk_size + kbeg * DiagGroups[gid]->num_diag;
+#ifdef COMPRESS
+                        A_jik[id] = DiagGroups[gid]->data + j * DiagGroups[gid]->slice_dki_size
+                            + (compressed ? 0 : i * DiagGroups[gid]->slice_dk_size) + kbeg * DiagGroups[gid]->num_diag;
+#else
+						A_jik[id] = DiagGroups[gid]->data + j * DiagGroups[gid]->slice_dki_size
+                            + i * DiagGroups[gid]->slice_dk_size + kbeg * DiagGroups[gid]->num_diag;
+#endif
 			}
 			const calc_t * b_jik = b_data + vec_off;
 			calc_t * x_jik = x_data + vec_off;
 			const calc_t * sqD_jik = sqD_data ? sqD_data + vec_off : sqD_buf;
 			// printf("j %d i %d sqD_jik %p\n", j, i, sqD_jik);
-			idx_t sid = local_x * (j - jbeg) + i - ibeg;
+#ifdef COMPRESS
+					idx_t sid = local_x * (j - jbeg) + (compressed ? 0 : i - ibeg);
+#else
+					idx_t sid = local_x * (j - jbeg) + i - ibeg;
+#endif
 			TridiagSolver<idx_t, data_t, calc_t> * tridSolver = this->tri_solver[sid];
 			{// 预取本柱的三对角系数
 				__builtin_prefetch(tridSolver->Get_a(), 0, 0);
@@ -936,7 +999,7 @@ void LineGS<idx_t, data_t, calc_t>::SOA_BackwardPass(const par_structVector<idx_
 	const par_structMatrix<idx_t, calc_t, calc_t> * par_A = (par_structMatrix<idx_t, calc_t, calc_t>*)(this->oper);
 	CHECK_LOCAL_HALO(x_vec, b_vec);
 	assert(DiagGroups_separated);
-	const idx_t local_x = x_vec.local_x;
+	const idx_t local_x = DiagGroups[0]->local_x;// 不管有无压缩矩阵数据都能用
     const calc_t * b_data = b_vec.data;
           calc_t * x_data = x_vec.data;
 
@@ -1005,13 +1068,22 @@ void LineGS<idx_t, data_t, calc_t>::SOA_BackwardPass(const par_structVector<idx_
 					const idx_t vec_off = j * vec_ki_size + i * vec_k_size + kend;
 					for (idx_t id = 0; id < num_arrs; id++) {
                         idx_t gid = beg_arrId + id;
+#ifdef COMPRESS
                         A_jik[id] = DiagGroups[gid]->data + j * DiagGroups[gid]->slice_dki_size
+                            + (compressed ? 0 : i * DiagGroups[gid]->slice_dk_size) + kend * DiagGroups[gid]->num_diag;
+#else
+						A_jik[id] = DiagGroups[gid]->data + j * DiagGroups[gid]->slice_dki_size
                             + i * DiagGroups[gid]->slice_dk_size + kend * DiagGroups[gid]->num_diag;
+#endif
                     }
 					const calc_t * b_jik = b_data + vec_off;
 					calc_t * x_jik = x_data + vec_off;
 					const calc_t * sqD_jik = sqD_data ? sqD_data + vec_off : sqD_buf + col_height;// 注意这里的偏移
+#ifdef COMPRESS
+					idx_t sid = local_x * (j - jbeg) + (compressed ? 0 : i - ibeg);
+#else
 					idx_t sid = local_x * (j - jbeg) + i - ibeg;
+#endif
 					TridiagSolver<idx_t, data_t, calc_t> * tridSolver = this->tri_solver[sid];
 					{// 预取本柱的三对角系数
 						__builtin_prefetch(tridSolver->Get_a(), 0, 0);
@@ -1051,13 +1123,22 @@ void LineGS<idx_t, data_t, calc_t>::SOA_BackwardPass(const par_structVector<idx_
 			const idx_t vec_off = j * vec_ki_size + i * vec_k_size + kend;
 			for (idx_t id = 0; id < num_arrs; id++) {
 				idx_t gid = beg_arrId + id;
-				A_jik[id] = DiagGroups[gid]->data + j * DiagGroups[gid]->slice_dki_size
-					+ i * DiagGroups[gid]->slice_dk_size + kend * DiagGroups[gid]->num_diag;
+#ifdef COMPRESS
+                        A_jik[id] = DiagGroups[gid]->data + j * DiagGroups[gid]->slice_dki_size
+                            + (compressed ? 0 : i * DiagGroups[gid]->slice_dk_size) + kend * DiagGroups[gid]->num_diag;
+#else
+						A_jik[id] = DiagGroups[gid]->data + j * DiagGroups[gid]->slice_dki_size
+                            + i * DiagGroups[gid]->slice_dk_size + kend * DiagGroups[gid]->num_diag;
+#endif
 			}
 			const calc_t * b_jik = b_data + vec_off;
 			calc_t * x_jik = x_data + vec_off;
 			const calc_t * sqD_jik = sqD_data ? sqD_data + vec_off : sqD_buf + col_height;
-			idx_t sid = local_x * (j - jbeg) + i - ibeg;
+#ifdef COMPRESS
+					idx_t sid = local_x * (j - jbeg) + (compressed ? 0 : i - ibeg);
+#else
+					idx_t sid = local_x * (j - jbeg) + i - ibeg;
+#endif
 			TridiagSolver<idx_t, data_t, calc_t> * tridSolver = this->tri_solver[sid];
 			{// 预取本柱的三对角系数
 				__builtin_prefetch(tridSolver->Get_a(), 0, 0);
